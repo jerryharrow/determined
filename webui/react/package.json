@@ -32,7 +32,7 @@
   "dependencies": {
     "ansi-to-html": "^0.7.1",
     "antd": "^4.21.4",
-    "dayjs": "^1.10.7",
+    "dayjs": "^1.11.5",
     "debug": "^4.3.4",
     "fp-ts": "^2.11.2",
     "fuse.js": "^6.4.6",
