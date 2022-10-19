@@ -4,9 +4,12 @@ import { RawValueType } from 'rc-select/lib/BaseSelect';
 import { LabelInValueType } from 'rc-select/lib/Select';
 import React, { useCallback, useEffect, useMemo } from 'react';
 
-import InteractiveTable, { ColumnDef, InteractiveTableSettings } from 'components/InteractiveTable';
-import { getFullPaginationConfig } from 'components/Table';
-import TableFilterSearch from 'components/TableFilterSearch';
+import InteractiveTable, {
+  ColumnDef,
+  InteractiveTableSettings,
+} from 'components/Table/InteractiveTable';
+import { getFullPaginationConfig } from 'components/Table/Table';
+import TableFilterSearch from 'components/Table/TableFilterSearch';
 import Avatar from 'components/UserAvatar';
 import { useStore } from 'contexts/Store';
 import useFeature from 'hooks/useFeature';
@@ -17,7 +20,7 @@ import {
   assignRolesToGroup,
   assignRolesToUser,
   removeRoleFromGroup,
-  removeRoleFromUser,
+  removeRolesFromUser,
 } from 'services/api';
 import { V1Group, V1GroupDetails, V1RoleWithAssignments } from 'services/api-ts-sdk';
 import { Size } from 'shared/components/Avatar';
@@ -228,8 +231,8 @@ const WorkspaceMembers: React.FC<Props> = ({
             try {
               // Try to remove the old role and then add the new role
               isUser(record)
-                ? await removeRoleFromUser({
-                    roleId: oldRoleId,
+                ? await removeRolesFromUser({
+                    roleIds: [oldRoleId],
                     userId: userOrGroupId,
                   })
                 : await removeRoleFromGroup({
