@@ -70,7 +70,7 @@ import Icon from 'shared/components/Icon/Icon';
 import Message, { MessageType } from 'shared/components/Message';
 import Spinner from 'shared/components/Spinner';
 import usePolling from 'shared/hooks/usePolling';
-import { RecordKey } from 'shared/types';
+import { RecordKey, ValueOf } from 'shared/types';
 import { isEqual } from 'shared/utils/data';
 import { ErrorLevel } from 'shared/utils/error';
 import { isNotFound } from 'shared/utils/service';
@@ -180,6 +180,8 @@ const ProjectDetails: React.FC = () => {
 
   const statesString = useMemo(() => settings.state?.join('.'), [settings.state]);
   const pinnedString = useMemo(() => JSON.stringify(settings.pinned), [settings.pinned]);
+  const labelsString = useMemo(() => settings.label?.join('.'), [settings.label]);
+  const usersString = useMemo(() => settings.user?.join('.'), [settings.user]);
 
   const fetchExperiments = useCallback(async (): Promise<void> => {
     try {
@@ -233,11 +235,12 @@ const ProjectDetails: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     canceler.signal,
     id,
     settings.archived,
-    settings.label,
+    labelsString,
     pinnedString,
     settings.search,
     settings.sortDesc,
@@ -245,7 +248,7 @@ const ProjectDetails: React.FC = () => {
     statesString,
     settings.tableLimit,
     settings.tableOffset,
-    settings.user,
+    usersString,
   ]);
 
   const fetchLabels = useCallback(async () => {
@@ -908,7 +911,7 @@ const ProjectDetails: React.FC = () => {
   }, [
     fetchExperiments,
     settings.archived,
-    settings.label,
+    labelsString,
     settings.search,
     settings.sortDesc,
     settings.sortKey,
@@ -916,7 +919,7 @@ const ProjectDetails: React.FC = () => {
     pinnedString,
     settings.tableLimit,
     settings.tableOffset,
-    settings.user,
+    usersString,
   ]);
 
   // cleanup
@@ -935,37 +938,37 @@ const ProjectDetails: React.FC = () => {
 
   const ExperimentTabOptions = useMemo(() => {
     const getMenuProps = (): { items: MenuProps['items']; onClick: MenuProps['onClick'] } => {
-      enum MenuKey {
-        SWITCH_ARCHIVED = 'switchArchive',
-        COLUMNS = 'columns',
-        RESULT_FILTER = 'resetFilters',
-      }
+      const MenuKey = {
+        Columns: 'columns',
+        ResultFilter: 'resetFilters',
+        SwitchArchived: 'switchArchive',
+      } as const;
 
       const funcs = {
-        [MenuKey.SWITCH_ARCHIVED]: () => {
+        [MenuKey.SwitchArchived]: () => {
           switchShowArchived(!settings.archived);
         },
-        [MenuKey.COLUMNS]: () => {
+        [MenuKey.Columns]: () => {
           handleCustomizeColumnsClick();
         },
-        [MenuKey.RESULT_FILTER]: () => {
+        [MenuKey.ResultFilter]: () => {
           resetFilters();
         },
       };
 
       const onItemClick: MenuProps['onClick'] = (e) => {
-        funcs[e.key as MenuKey]();
+        funcs[e.key as ValueOf<typeof MenuKey>]();
       };
 
       const menuItems: MenuProps['items'] = [
         {
-          key: MenuKey.SWITCH_ARCHIVED,
+          key: MenuKey.SwitchArchived,
           label: settings.archived ? 'Hide Archived' : 'Show Archived',
         },
-        { key: MenuKey.COLUMNS, label: 'Columns' },
+        { key: MenuKey.Columns, label: 'Columns' },
       ];
       if (filterCount > 0) {
-        menuItems.push({ key: MenuKey.RESULT_FILTER, label: `Clear Filters (${filterCount})` });
+        menuItems.push({ key: MenuKey.ResultFilter, label: `Clear Filters (${filterCount})` });
       }
       return { items: menuItems, onClick: onItemClick };
     };
