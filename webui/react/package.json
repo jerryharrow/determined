@@ -105,7 +105,7 @@
     "@types/sprintf-js": "^1.1.2",
     "@types/throttle-debounce": "^5.0.0",
     "@types/webpack": "^5.28.0",
-    "@typescript-eslint/eslint-plugin": "^5.48.0",
+    "@typescript-eslint/eslint-plugin": "^5.48.1",
     "@typescript-eslint/parser": "^5.48.0",
     "antd-dayjs-webpack-plugin": "^1.0.1",
     "antd-theme-generator": "^1.2.11",
