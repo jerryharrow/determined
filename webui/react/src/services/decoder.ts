@@ -627,16 +627,15 @@ export const decodeV1TrialToTrialItem = (data: Sdk.Trialv1Trial): types.TrialIte
   };
 };
 
-const decodeSummaryMetrics = (data: Sdk.V1SummarizedMetric[]): types.MetricContainer[] => {
+const decodeSummaryMetrics = (data: Sdk.V1DownsampledMetrics[]): types.MetricContainer[] => {
   return data.map((m) => {
     const metrics: types.MetricContainer = {
       data: m.data.map((pt) => ({
         batches: pt.batches,
         epoch: pt.epoch,
         time: pt.time,
-        value: pt.value,
+        values: pt.values,
       })),
-      name: m.name,
       type:
         m.type === Sdk.V1MetricType.TRAINING
           ? types.MetricType.Training
@@ -812,4 +811,20 @@ export const decodeJobStates = (
   return states as unknown as Array<
     'STATE_UNSPECIFIED' | 'STATE_QUEUED' | 'STATE_SCHEDULED' | 'STATE_SCHEDULED_BACKFILLED'
   >;
+};
+
+export const mapV1ExperimentActionResults = (
+  results: Sdk.V1ExperimentActionResult[],
+): types.BulkActionResult => {
+  return results.reduce(
+    (acc, cur) => {
+      if (cur.error.length > 0) {
+        acc.failed.push(cur);
+      } else {
+        acc.successful.push(cur.id);
+      }
+      return acc;
+    },
+    { failed: [], successful: [] } as types.BulkActionResult,
+  );
 };

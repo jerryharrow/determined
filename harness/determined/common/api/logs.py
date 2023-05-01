@@ -1,41 +1,14 @@
-from typing import Iterable, List, Optional
-
-from termcolor import colored
+from typing import Iterable, List, Optional, Union
 
 from determined.common import api
 from determined.common.api import bindings
 
 
-def pprint_task_logs(task_id: str, logs: Iterable[bindings.v1TaskLogsResponse]) -> None:
-    try:
-        for log in logs:
-            print(log.message, end="")
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print(
-            colored(
-                "Task log stream ended. To reopen log stream, run: "
-                "det task logs -f {}".format(task_id),
-                "green",
-            )
-        )
-
-
-def pprint_trial_logs(trial_id: int, logs: Iterable[bindings.v1TrialLogsResponse]) -> None:
-    try:
-        for log in logs:
-            print(log.message, end="")
-    except KeyboardInterrupt:
-        pass
-    finally:
-        print(
-            colored(
-                "Trial log stream ended. To reopen log stream, run: "
-                "det trial logs -f {}".format(trial_id),
-                "green",
-            )
-        )
+def pprint_logs(
+    logs: Iterable[Union[bindings.v1TaskLogsResponse, bindings.v1TrialLogsResponse]]
+) -> None:
+    for log in logs:
+        print(log.message, end="")
 
 
 def trial_logs(

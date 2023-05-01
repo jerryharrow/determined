@@ -53,6 +53,8 @@ import { MetricType, Project, ResourcePool, User } from 'types';
 import { NotLoaded } from 'utils/loadable';
 import { generateTestProjectData, generateTestWorkspaceData } from 'utils/tests/generateTestData';
 
+import useConfirm, { voidPromiseFn } from '../components/kit/useConfirm';
+
 import css from './DesignKit.module.scss';
 import { CheckpointsDict } from './TrialDetails/F_TrialDetailsOverview';
 import WorkspaceCard from './WorkspaceList/WorkspaceCard';
@@ -1736,14 +1738,19 @@ const TooltipsSection: React.FC = () => {
       <AntDCard title="Usage">
         <strong>Tooltips default</strong>
         <Space>
-          <Tooltip title={text}>
-            <span>Trigger on hover</span>
+          <Tooltip content={text}>
+            <Button>Trigger on hover</Button>
           </Tooltip>
-          <Tooltip title={text} trigger="click">
-            <span>Trigger on click</span>
+          <Tooltip content={text} trigger="click">
+            <Button>Trigger on click</Button>
           </Tooltip>
-          <Tooltip title={text} trigger="contextMenu">
-            <span>Trigger on right click</span>
+          <Tooltip content={text} trigger="contextMenu">
+            <Button>Trigger on right click</Button>
+          </Tooltip>
+        </Space>
+        <Space>
+          <Tooltip content={text} placement="bottom" showArrow={false}>
+            <Button>Tooltip without arrow</Button>
           </Tooltip>
         </Space>
         <strong>Considerations</strong>
@@ -1756,50 +1763,56 @@ const TooltipsSection: React.FC = () => {
         <strong>Variations</strong>
         <div>
           <div style={{ marginLeft: buttonWidth, whiteSpace: 'nowrap' }}>
-            <Tooltip placement="topLeft" title={text}>
+            <Tooltip content={text} placement="topLeft">
               <Button>TL</Button>
             </Tooltip>
-            <Tooltip placement="top" title={text}>
+            <Tooltip content={text} placement="top">
               <Button>Top</Button>
             </Tooltip>
-            <Tooltip placement="topRight" title={text}>
+            <Tooltip content={text} placement="topRight">
               <Button>TR</Button>
             </Tooltip>
           </div>
           <div style={{ float: 'left', width: buttonWidth }}>
-            <Tooltip placement="leftTop" title={text}>
+            <Tooltip content={text} placement="leftTop">
               <Button>LT</Button>
             </Tooltip>
-            <Tooltip placement="left" title={text}>
+            <Tooltip content={text} placement="left">
               <Button>Left</Button>
             </Tooltip>
-            <Tooltip placement="leftBottom" title={text}>
+            <Tooltip content={text} placement="leftBottom">
               <Button>LB</Button>
             </Tooltip>
           </div>
           <div style={{ marginLeft: buttonWidth * 4 + 24, width: buttonWidth }}>
-            <Tooltip placement="rightTop" title={text}>
+            <Tooltip content={text} placement="rightTop">
               <Button>RT</Button>
             </Tooltip>
-            <Tooltip placement="right" title={text}>
+            <Tooltip content={text} placement="right">
               <Button>Right</Button>
             </Tooltip>
-            <Tooltip placement="rightBottom" title={text}>
+            <Tooltip content={text} placement="rightBottom">
               <Button>RB</Button>
             </Tooltip>
           </div>
           <div style={{ clear: 'both', marginLeft: buttonWidth, whiteSpace: 'nowrap' }}>
-            <Tooltip placement="bottomLeft" title={text}>
+            <Tooltip content={text} placement="bottomLeft">
               <Button>BL</Button>
             </Tooltip>
-            <Tooltip placement="bottom" title={text}>
+            <Tooltip content={text} placement="bottom">
               <Button>Bottom</Button>
             </Tooltip>
-            <Tooltip placement="bottomRight" title={text}>
+            <Tooltip content={text} placement="bottomRight">
               <Button>BR</Button>
             </Tooltip>
           </div>
         </div>
+        <strong>Tooltip with complex content</strong>
+        <p>
+          <Tooltip content={<UserAvatar />}>
+            <Button>{'Hover to see user avatars'}</Button>
+          </Tooltip>
+        </p>
       </AntDCard>
     </ComponentSection>
   );
@@ -1876,20 +1889,6 @@ const MediumModalComponent: React.FC<{ value: string }> = ({ value }) => {
 const LargeModalComponent: React.FC<{ value: string }> = ({ value }) => {
   return (
     <Modal size="large" title={value}>
-      <div>{value}</div>
-    </Modal>
-  );
-};
-
-const DangerousModalComponent: React.FC<{ value: string }> = ({ value }) => {
-  return (
-    <Modal
-      danger
-      submit={{
-        handler: handleSubmit,
-        text: 'Submit',
-      }}
-      title={value}>
       <div>{value}</div>
     </Modal>
   );
@@ -1996,16 +1995,20 @@ const ModalSection: React.FC = () => {
   const SmallModal = useModal(SmallModalComponent);
   const MediumModal = useModal(MediumModalComponent);
   const LargeModal = useModal(LargeModalComponent);
-  const DangerousModal = useModal(DangerousModalComponent);
   const FormModal = useModal(FormModalComponent);
   const FormFailModal = useModal(FormModalComponent);
   const LinksModal = useModal(LinksModalComponent);
   const IconModal = useModal(IconModalComponent);
   const ValidationModal = useModal(ValidationModalComponent);
 
+  const confirm = useConfirm();
+  const config = { content: text, title: text };
+  const confirmDefault = () => confirm({ ...config, onConfirm: voidPromiseFn });
+  const confirmDangerous = () => confirm({ ...config, danger: true, onConfirm: voidPromiseFn });
+
   return (
     <ComponentSection id="Modals" title="Modals">
-      <AntDCard>
+      <AntDCard title="Usage">
         <Label>State value that gets passed to modal via props</Label>
         <Input value={text} onChange={(s) => setText(String(s.target.value))} />
         <hr />
@@ -2035,13 +2038,13 @@ const ModalSection: React.FC = () => {
         <hr />
         <strong>Variations</strong>
         <Space>
-          <Button onClick={DangerousModal.open}>Open Dangerous Modal</Button>
+          <Button onClick={confirmDefault}>Open Confirmation</Button>
+          <Button onClick={confirmDangerous}>Open Dangerous Confirmation</Button>
         </Space>
       </AntDCard>
       <SmallModal.Component value={text} />
       <MediumModal.Component value={text} />
       <LargeModal.Component value={text} />
-      <DangerousModal.Component value={text} />
       <FormModal.Component value={text} />
       <FormFailModal.Component fail value={text} />
       <LinksModal.Component value={text} />

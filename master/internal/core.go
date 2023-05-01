@@ -56,7 +56,6 @@ import (
 	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/task/taskmodel"
 	"github.com/determined-ai/determined/master/internal/telemetry"
-	"github.com/determined-ai/determined/master/internal/template"
 	"github.com/determined-ai/determined/master/internal/user"
 	"github.com/determined-ai/determined/master/internal/webhooks"
 	"github.com/determined-ai/determined/master/pkg/actor"
@@ -1005,6 +1004,7 @@ func (m *Master) Run(ctx context.Context) error {
 		m.db,
 		m.echo,
 		&m.config.ResourceConfig,
+		&m.config.TaskContainerDefaults,
 		&aproto.MasterSetAgentOptions{
 			MasterInfo:     m.Info(),
 			LoggingOptions: m.config.Logging,
@@ -1181,7 +1181,6 @@ func (m *Master) Run(ctx context.Context) error {
 	})
 
 	user.RegisterAPIHandler(m.echo, userService)
-	template.RegisterAPIHandler(m.echo, m.db)
 
 	telemetry.Setup(
 		m.system,

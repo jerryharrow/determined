@@ -40,7 +40,7 @@ export interface TrialSummaryParams extends TrialSummaryBaseParams {
   trialId: number;
 }
 
-export interface CompareTrialsParams extends TrialSummaryBaseParams {
+export interface TimeSeriesParams extends TrialSummaryBaseParams {
   trialIds: number[];
 }
 
@@ -100,6 +100,11 @@ export interface SearchExperimentsParams extends PaginationParams {
   projectId?: number;
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   options?: any;
+}
+
+export interface BulkActionParams {
+  experimentIds: number[];
+  filters?: Api.V1BulkExperimentFilters;
 }
 
 export interface GetExperimentParams {
@@ -200,7 +205,7 @@ export interface PatchModelParams {
   body: {
     description?: string;
     labels?: string[];
-    metadata?: Record<RecordKey, string>;
+    metadata?: Record<RecordKey, string | object>;
     name: string;
     notes?: string;
   };
@@ -211,7 +216,7 @@ export interface PatchModelVersionParams {
   body: {
     comment?: string;
     labels?: string[];
-    metadata?: Record<RecordKey, string>;
+    metadata?: Record<RecordKey, string | object>;
     modelName: string;
     name?: string;
     notes?: string;
@@ -261,6 +266,7 @@ export interface LaunchTensorBoardParams {
   experimentIds?: Array<number>;
   trialIds?: Array<number>;
   workspaceId?: number;
+  filters?: Api.V1BulkExperimentFilters;
 }
 
 export interface LaunchJupyterLabParams {
