@@ -10,6 +10,7 @@ import Button from 'components/kit/Button';
 import Card from 'components/kit/Card';
 import Checkbox from 'components/kit/Checkbox';
 import ClipboardButton from 'components/kit/ClipboardButton';
+import CodeEditor from 'components/kit/CodeEditor';
 import { Column, Columns } from 'components/kit/Columns';
 import Dropdown, { MenuItem } from 'components/kit/Dropdown';
 import Empty from 'components/kit/Empty';
@@ -33,6 +34,7 @@ import Toggle from 'components/kit/Toggle';
 import Tooltip from 'components/kit/Tooltip';
 import Header from 'components/kit/Typography/Header';
 import Paragraph from 'components/kit/Typography/Paragraph';
+import { useNoteDemo, useNotesDemo } from 'components/kit/useNoteDemo';
 import UserAvatar from 'components/kit/UserAvatar';
 import { useTags } from 'components/kit/useTags';
 import Label from 'components/Label';
@@ -49,7 +51,7 @@ import { ValueOf } from 'shared/types';
 import { noOp } from 'shared/utils/service';
 import { BrandingType } from 'stores/determinedInfo';
 import { MetricType, User } from 'types';
-import { NotLoaded } from 'utils/loadable';
+import { Loaded, NotLoaded } from 'utils/loadable';
 import loremIpsum from 'utils/loremIpsum';
 
 import useConfirm, { voidPromiseFn } from '../components/kit/useConfirm';
@@ -65,6 +67,7 @@ const ComponentTitles = {
   Charts: 'Charts',
   Checkboxes: 'Checkboxes',
   ClipboardButton: 'ClipboardButton',
+  CodeEditor: 'CodeEditor',
   Columns: 'Columns',
   Dropdown: 'Dropdown',
   Empty: 'Empty',
@@ -78,6 +81,7 @@ const ComponentTitles = {
   LogViewer: 'LogViewer',
   Modals: 'Modals',
   Nameplate: 'Nameplate',
+  Notes: 'Notes',
   Pagination: 'Pagination',
   Pivot: 'Pivot',
   Select: 'Select',
@@ -832,6 +836,68 @@ const DropdownSection: React.FC = () => {
   );
 };
 
+const CodeEditorSection: React.FC = () => {
+  return (
+    <ComponentSection id="CodeEditor" title="CodeEditor">
+      <AntDCard>
+        <p>
+          The Code Editor (<code>{'<CodeEditor>'}</code>) shows Python and YAML files with syntax
+          highlighting. If multiple files are sent, the component shows a file tree browser.
+        </p>
+        <ul>
+          <li>Use the readonly attribute to make code viewable but not editable.</li>
+        </ul>
+      </AntDCard>
+      <AntDCard title="Usage">
+        <strong>Editable Python file</strong>
+        <CodeEditor
+          files={[
+            {
+              content: Loaded('import math\nprint(math.pi)\n\n'),
+              key: 'test.py',
+              title: 'test.py',
+            },
+          ]}
+        />
+        <strong>Read-only YAML file</strong>
+        <CodeEditor
+          files={[
+            {
+              content: Loaded(
+                'name: Unicode Test 日本😃\ndata:\n  url: https://example.tar.gz\nhyperparameters:\n  learning_rate: 1.0\n  global_batch_size: 64\n  n_filters1: 32\n  n_filters2: 64\n  dropout1: 0.25\n  dropout2: 0.5\nsearcher:\n  name: single\n  metric: validation_loss\n  max_length:\n      batches: 937 #60,000 training images with batch size 64\n  smaller_is_better: true\nentrypoint: model_def:MNistTrial\nresources:\n  slots_per_trial: 2',
+              ),
+              key: 'test1.yaml',
+              title: 'test1.yaml',
+            },
+          ]}
+          readonly={true}
+        />
+        <strong>Multiple files, one not finished loading.</strong>
+        <CodeEditor
+          files={[
+            {
+              content: Loaded(
+                'hyperparameters:\n  learning_rate: 1.0\n  global_batch_size: 512\n  n_filters1: 32\n  n_filters2: 64\n  dropout1: 0.25\n  dropout2: 0.5',
+              ),
+              isLeaf: true,
+              key: 'one.yaml',
+              title: 'one.yaml',
+            },
+            {
+              content: Loaded('searcher:\n  name: single\n  metric: validation_loss\n'),
+              isLeaf: true,
+              key: 'two.yaml',
+              title: 'two.yaml',
+            },
+            { content: NotLoaded, isLeaf: true, key: 'unloaded.yaml', title: 'unloaded.yaml' },
+          ]}
+          readonly={true}
+        />
+      </AntDCard>
+    </ComponentSection>
+  );
+};
+
 const InputSearchSection: React.FC = () => {
   return (
     <ComponentSection id="InputSearch" title="InputSearch">
@@ -1204,6 +1270,26 @@ const FacepileSection: React.FC = () => {
           <li>Facepile with both name initials</li>
           <p>Check the Facepile above and select a user that would fit that case</p>
         </ul>
+      </AntDCard>
+    </ComponentSection>
+  );
+};
+
+const NotesSection: React.FC = () => {
+  return (
+    <ComponentSection id="Notes" title="Notes">
+      <AntDCard>
+        <p>
+          A <code>{'<Notes>'}</code> is used for taking notes. It can be single page note or multi
+          pages notes. Each page of note consists of a title and a sheet of note.
+        </p>
+      </AntDCard>
+      <AntDCard title="Usage">
+        <strong>Single page note</strong>
+        {useNoteDemo()()}
+        <hr />
+        <strong>Multi pages notes</strong>
+        {useNotesDemo()()}
       </AntDCard>
     </ComponentSection>
   );
@@ -2382,6 +2468,7 @@ const Components = {
   Charts: <ChartsSection />,
   Checkboxes: <CheckboxesSection />,
   ClipboardButton: <ClipboardButtonSection />,
+  CodeEditor: <CodeEditorSection />,
   Columns: <ColumnsSection />,
   Dropdown: <DropdownSection />,
   Empty: <EmptySection />,
@@ -2395,6 +2482,7 @@ const Components = {
   LogViewer: <LogViewerSection />,
   Modals: <ModalSection />,
   Nameplate: <NameplateSection />,
+  Notes: <NotesSection />,
   Pagination: <PaginationSection />,
   Pivot: <PivotSection />,
   Select: <SelectSection />,
