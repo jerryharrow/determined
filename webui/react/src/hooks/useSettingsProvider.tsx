@@ -2,11 +2,11 @@ import { Map } from 'immutable';
 import { observable, useObservable, WritableObservable } from 'micro-observables';
 import React, { createContext, useEffect, useRef, useState } from 'react';
 
+import Spinner from 'components/Spinner';
 import { getUserSetting } from 'services/api';
-import Spinner from 'shared/components/Spinner';
-import { ErrorType } from 'shared/utils/error';
 import authStore from 'stores/auth';
 import userStore from 'stores/users';
+import { ErrorType } from 'utils/error';
 import handleError from 'utils/error';
 import { Loadable } from 'utils/loadable';
 
@@ -21,16 +21,14 @@ type UserSettingsState = Map<string, Settings>;
 export type Settings = { [key: string]: any }; //TODO: find a way to use a better type here
 
 type UserSettingsContext = {
-  clearQuerySettings: () => void;
   isLoading: WritableObservable<boolean>;
-  querySettings: string;
+  querySettings: URLSearchParams;
   state: WritableObservable<UserSettingsState>;
 };
 
 export const UserSettings = createContext<UserSettingsContext>({
-  clearQuerySettings: () => undefined,
   isLoading: observable(false),
-  querySettings: '',
+  querySettings: new URLSearchParams(''),
   state: observable(Map<string, Settings>()),
 });
 
@@ -39,14 +37,14 @@ export const SettingsProvider: React.FC<React.PropsWithChildren> = ({ children }
   const isAuthChecked = useObservable(authStore.isChecked);
   const [canceler] = useState(new AbortController());
   const [isLoading] = useState(() => observable(true));
-  const querySettings = useRef('');
+  const querySettings = useRef(new URLSearchParams(''));
   const [settingsState] = useState(() => observable(Map<string, Settings>()));
 
   useEffect(() => {
     if (!isAuthChecked) return;
 
-    try {
-      getUserSetting({}, { signal: canceler.signal }).then((response) => {
+    getUserSetting({}, { signal: canceler.signal })
+      .then((response) => {
         isLoading.set(false);
         settingsState.update((currentState) => {
           return currentState.withMutations((state) => {
@@ -65,29 +63,24 @@ export const SettingsProvider: React.FC<React.PropsWithChildren> = ({ children }
             });
           });
         });
+      })
+      .catch((error) => {
+        handleError(error, {
+          isUserTriggered: false,
+          publicMessage: 'Unable to fetch user settings.',
+          type: ErrorType.Api,
+        });
+      })
+      .finally(() => {
+        isLoading.set(false);
       });
-    } catch (error) {
-      handleError(error, {
-        isUserTriggered: false,
-        publicMessage: 'Unable to fetch user settings.',
-        type: ErrorType.Api,
-      });
-    } finally {
-      isLoading.set(false);
-    }
 
     return () => canceler.abort();
   }, [canceler, isAuthChecked, isLoading, settingsState]);
 
   useEffect(() => {
-    const url = window.location.search.substring(/^\?/.test(location.search) ? 1 : 0);
-
-    querySettings.current = url;
+    querySettings.current = new URLSearchParams(window.location.search);
   }, []);
-
-  const clearQuerySettings = () => {
-    querySettings.current = '';
-  };
 
   return (
     <Spinner
@@ -95,7 +88,6 @@ export const SettingsProvider: React.FC<React.PropsWithChildren> = ({ children }
       tip="Loading Page">
       <UserSettings.Provider
         value={{
-          clearQuerySettings,
           isLoading: isLoading,
           querySettings: querySettings.current,
           state: settingsState,

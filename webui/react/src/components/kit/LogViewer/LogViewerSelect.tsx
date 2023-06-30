@@ -5,9 +5,9 @@ import { throttle } from 'throttle-debounce';
 
 import Button from 'components/kit/Button';
 import Input from 'components/kit/Input';
+import { alphaNumericSorter } from 'components/kit/internal/functions';
+import { LogLevelFromApi } from 'components/kit/internal/types';
 import Select, { Option } from 'components/kit/Select';
-import { alphaNumericSorter } from 'shared/utils/sort';
-import { LogLevelFromApi } from 'types';
 
 interface Props {
   onChange?: (filters: Filters) => void;
@@ -87,27 +87,6 @@ const LogViewerSelect: React.FC<Props> = ({
     return false;
   }, [selectOptions, values]);
 
-  const handleChange = useCallback(
-    (key: keyof Filters, caster: NumberConstructor | StringConstructor) => (value: SelectValue) => {
-      setFilters((prev) => ({
-        ...prev,
-        [key]: (value as Array<string>).map((item) => caster(item)),
-      }));
-    },
-    [],
-  );
-
-  const handleSearch = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) =>
-      setFilters((prev) => ({ ...prev, searchText: e.target.value })),
-    [],
-  );
-
-  const handleReset = useCallback(() => {
-    setFilters({});
-    onReset?.();
-  }, [onReset]);
-
   const throttledChangeFilter = useMemo(
     () =>
       throttle(
@@ -121,15 +100,41 @@ const LogViewerSelect: React.FC<Props> = ({
   );
 
   useEffect(() => {
-    if (!filters) return;
-    throttledChangeFilter(filters);
-  }, [filters, throttledChangeFilter]);
-
-  useEffect(() => {
     return () => {
       throttledChangeFilter.cancel();
     };
   }, [throttledChangeFilter]);
+
+  const handleChange = useCallback(
+    (key: keyof Filters, caster: NumberConstructor | StringConstructor) => (value: SelectValue) => {
+      setFilters((prev) => {
+        const newF = {
+          ...prev,
+          [key]: (value as Array<string>).map((item) => caster(item)),
+        };
+        throttledChangeFilter(newF);
+        return newF;
+      });
+    },
+    [throttledChangeFilter],
+  );
+
+  const handleSearch = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setFilters((prev) => {
+        const newF = { ...prev, searchText: e.target.value };
+        throttledChangeFilter(newF);
+        return newF;
+      });
+    },
+    [throttledChangeFilter],
+  );
+
+  const handleReset = useCallback(() => {
+    setFilters({});
+    onReset?.();
+    throttledChangeFilter({});
+  }, [onReset, throttledChangeFilter]);
 
   return (
     <>

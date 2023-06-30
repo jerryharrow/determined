@@ -1,5 +1,7 @@
 import enum
-from typing import Callable, Iterator, Optional, Tuple, TypeVar, Union
+from typing import Callable, Iterator, Optional, Set, Tuple, TypeVar, Union
+
+import urllib3
 
 from determined.common import api, util
 from determined.common.api import Session, bindings
@@ -11,6 +13,12 @@ class PageOpts(str, enum.Enum):
     single = "1"
     all = "all"
 
+
+# HTTP status codes that will force request retries.
+RETRY_STATUSES = [502, 503, 504]  # Bad Gateway, Service Unavailable, Gateway Timeout
+
+# Default max number of times to retry a request.
+MAX_RETRIES = 5
 
 # Not that read_paginated requires the output of get_with_offset to be a Paginated type to work.
 # The Paginated union type is generated based on response objects with a .pagination attribute.
@@ -43,6 +51,15 @@ def read_paginated(
         offset = pagination.endIndex
 
 
+def default_retry(max_retries: int = MAX_RETRIES) -> urllib3.util.retry.Retry:
+    retry = urllib3.util.retry.Retry(
+        total=max_retries,
+        backoff_factor=0.5,  # {backoff factor} * (2 ** ({number of total retries} - 1))
+        status_forcelist=RETRY_STATUSES,
+    )
+    return retry
+
+
 # Literal["notebook", "tensorboard", "shell", "command"]
 class NTSC_Kind(enum.Enum):
     notebook = "notebook"
@@ -52,6 +69,14 @@ class NTSC_Kind(enum.Enum):
 
 
 AnyNTSC = Union[bindings.v1Notebook, bindings.v1Tensorboard, bindings.v1Shell, bindings.v1Command]
+
+all_ntsc: Set[NTSC_Kind] = {
+    NTSC_Kind.notebook,
+    NTSC_Kind.shell,
+    NTSC_Kind.command,
+    NTSC_Kind.tensorboard,
+}
+proxied_ntsc: Set[NTSC_Kind] = {NTSC_Kind.notebook, NTSC_Kind.tensorboard}
 
 
 def get_ntsc_details(session: Session, typ: NTSC_Kind, ntsc_id: str) -> AnyNTSC:

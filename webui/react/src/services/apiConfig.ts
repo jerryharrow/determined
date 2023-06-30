@@ -7,19 +7,22 @@ import { serverAddress } from 'routes/utils';
 import * as Api from 'services/api-ts-sdk';
 import * as decoder from 'services/decoder';
 import * as Service from 'services/types';
-import { DetApi, EmptyParams, RawJson, SingleEntityParams } from 'shared/types';
-import { identity, noOp } from 'shared/utils/service';
 import { DeterminedInfo, Telemetry } from 'stores/determinedInfo';
+import { DetApi, EmptyParams, RawJson, SingleEntityParams } from 'types';
 import * as Type from 'types';
+import { identity, noOp } from 'utils/service';
 
 const updatedApiConfigParams = (
   apiConfig?: Api.ConfigurationParameters,
 ): Api.ConfigurationParameters => {
-  return {
-    apiKey: `Bearer ${globalStorage.authToken}`,
+  const config: Api.ConfigurationParameters = {
     basePath: serverAddress(),
     ...apiConfig,
   };
+  if (globalStorage.authToken !== '') {
+    config.apiKey = `Bearer ${globalStorage.authToken}`;
+  }
+  return config;
 };
 
 const generateApiConfig = (apiConfig?: Api.ConfigurationParameters) => {
@@ -200,7 +203,6 @@ export const resetUserSetting: DetApi<
 /**
  * Returns roles, and workspace/global assignment of those roles,
  * for a user specified in params.
- *
  * @param {GetUserParams} params - An object containing userId to look up their roles.
  */
 export const getUserPermissions: DetApi<
@@ -477,6 +479,52 @@ export const getResourceAllocationAggregated: DetApi<
       options,
     );
   },
+};
+
+export const getResourcePoolBindings: DetApi<
+  Service.GetResourcePoolBindingsParams,
+  Api.V1ListWorkspacesBoundToRPResponse,
+  Api.V1ListWorkspacesBoundToRPResponse
+> = {
+  name: 'getResourcePoolBindings',
+  postProcess: (response) => {
+    return response;
+  },
+  request: (params, options) =>
+    detApi.Internal.listWorkspacesBoundToRP(params.resourcePoolName, undefined, undefined, options),
+};
+
+export const deleteResourcePoolBindings: DetApi<
+  Service.ModifyResourcePoolBindingsParams,
+  Api.V1UnbindRPFromWorkspaceResponse,
+  void
+> = {
+  name: 'deleteResourcePoolBindings',
+  postProcess: noOp,
+  request: (params, options) =>
+    detApi.Internal.unbindRPFromWorkspace(params.resourcePoolName, params, options),
+};
+
+export const addResourcePoolBindings: DetApi<
+  Service.ModifyResourcePoolBindingsParams,
+  Api.V1BindRPToWorkspaceResponse,
+  void
+> = {
+  name: 'addResourcePoolBindings',
+  postProcess: noOp,
+  request: (params, options) =>
+    detApi.Internal.bindRPToWorkspace(params.resourcePoolName, params, options),
+};
+
+export const overwriteResourcePoolBindings: DetApi<
+  Service.ModifyResourcePoolBindingsParams,
+  Api.V1OverwriteRPWorkspaceBindingsResponse,
+  void
+> = {
+  name: 'overwriteResourcePoolBindings',
+  postProcess: noOp,
+  request: (params, options) =>
+    detApi.Internal.overwriteRPWorkspaceBindings(params.resourcePoolName, params, options),
 };
 
 /* Trials */
@@ -988,6 +1036,7 @@ export const timeSeries: DetApi<
       params.startBatches,
       params.endBatches,
       params.metricType ? Type.metricTypeParamMap[params.metricType] : 'METRIC_TYPE_UNSPECIFIED',
+      undefined,
       params.scale === Type.Scale.Log ? 'SCALE_LOG' : 'SCALE_LINEAR',
     ),
 };
@@ -1329,7 +1378,7 @@ export const getWorkspaces: DetApi<
 };
 
 export const getWorkspace: DetApi<
-  Service.GetWorkspaceParams,
+  Service.ActionWorkspaceParams,
   Api.V1GetWorkspaceResponse,
   Type.Workspace
 > = {
@@ -1337,7 +1386,7 @@ export const getWorkspace: DetApi<
   postProcess: (response) => {
     return decoder.mapV1Workspace(response.workspace);
   },
-  request: (params) => detApi.Workspaces.getWorkspace(params.id),
+  request: (params) => detApi.Workspaces.getWorkspace(params.workspaceId),
 };
 
 export const createWorkspace: DetApi<
@@ -1398,13 +1447,13 @@ export const getWorkspaceProjects: DetApi<
 };
 
 export const deleteWorkspace: DetApi<
-  Service.DeleteWorkspaceParams,
+  Service.ActionWorkspaceParams,
   Api.V1DeleteWorkspaceResponse,
   Type.DeletionStatus
 > = {
   name: 'deleteWorkspace',
   postProcess: decoder.mapDeletionStatus,
-  request: (params) => detApi.Workspaces.deleteWorkspace(params.id),
+  request: (params) => detApi.Workspaces.deleteWorkspace(params.workspaceId),
 };
 
 export const patchWorkspace: DetApi<
@@ -1426,39 +1475,51 @@ export const patchWorkspace: DetApi<
 };
 
 export const archiveWorkspace: DetApi<
-  Service.ArchiveWorkspaceParams,
+  Service.ActionWorkspaceParams,
   Api.V1ArchiveWorkspaceResponse,
   void
 > = {
   name: 'archiveWorkspace',
   postProcess: noOp,
-  request: (params) => detApi.Workspaces.archiveWorkspace(params.id),
+  request: (params) => detApi.Workspaces.archiveWorkspace(params.workspaceId),
 };
 
 export const unarchiveWorkspace: DetApi<
-  Service.UnarchiveWorkspaceParams,
+  Service.ActionWorkspaceParams,
   Api.V1UnarchiveWorkspaceResponse,
   void
 > = {
   name: 'unarchiveWorkspace',
   postProcess: noOp,
-  request: (params) => detApi.Workspaces.unarchiveWorkspace(params.id),
+  request: (params) => detApi.Workspaces.unarchiveWorkspace(params.workspaceId),
 };
 
-export const pinWorkspace: DetApi<Service.PinWorkspaceParams, Api.V1PinWorkspaceResponse, void> = {
-  name: 'pinWorkspace',
-  postProcess: noOp,
-  request: (params) => detApi.Workspaces.pinWorkspace(params.id),
-};
+export const pinWorkspace: DetApi<Service.ActionWorkspaceParams, Api.V1PinWorkspaceResponse, void> =
+  {
+    name: 'pinWorkspace',
+    postProcess: noOp,
+    request: (params) => detApi.Workspaces.pinWorkspace(params.workspaceId),
+  };
 
 export const unpinWorkspace: DetApi<
-  Service.UnpinWorkspaceParams,
+  Service.ActionWorkspaceParams,
   Api.V1UnpinWorkspaceResponse,
   void
 > = {
   name: 'unpinWorkspace',
   postProcess: noOp,
-  request: (params) => detApi.Workspaces.unpinWorkspace(params.id),
+  request: (params) => detApi.Workspaces.unpinWorkspace(params.workspaceId),
+};
+
+export const getAvailableResourcePools: DetApi<
+  Service.ActionWorkspaceParams,
+  Api.V1ListRPsBoundToWorkspaceResponse,
+  string[]
+> = {
+  name: 'getAvailableResourcePools',
+  postProcess: (response) => response.resourcePools ?? [],
+  request: (params, options) =>
+    detApi.Workspaces.listRPsBoundToWorkspace(params.workspaceId, undefined, undefined, options),
 };
 
 /* Projects */
@@ -1772,17 +1833,23 @@ export const launchTensorBoard: DetApi<
 
 export const getJobQueue: DetApi<
   Service.GetJobQParams,
-  Api.V1GetJobsResponse,
+  Api.V1GetJobsV2Response,
   Service.GetJobsResponse
 > = {
   name: 'getJobQ',
   postProcess: (response) => {
-    response.jobs = response.jobs.filter((job) => !!job.summary);
-    // we don't work with jobs without a summary in the ui yet
-    return response as Service.GetJobsResponse;
+    const internalResponse: Service.GetJobsResponse = {
+      jobs: [],
+      pagination: response.pagination,
+    };
+    internalResponse.jobs = response.jobs
+      // we don't work with jobs without a summary in the ui yet
+      .filter((job) => !!(job.limited?.summary || job.full?.summary))
+      .map((jobPack) => (jobPack.full || jobPack.limited) as Type.Job);
+    return internalResponse;
   },
   request: (params: Service.GetJobQParams) =>
-    detApi.Internal.getJobs(
+    detApi.Internal.getJobsV2(
       params.offset,
       params.limit,
       params.resourcePool,

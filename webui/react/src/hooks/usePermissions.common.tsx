@@ -2,8 +2,8 @@ import { render, RenderResult } from '@testing-library/react';
 import React from 'react';
 
 import usePermissions from 'hooks/usePermissions';
-import { GetWorkspaceParams } from 'services/types';
-import { StoreProvider as UIProvider } from 'shared/contexts/stores/UI';
+import { ActionWorkspaceParams } from 'services/types';
+import { StoreProvider as UIProvider } from 'stores/contexts/UI';
 
 export const workspace = {
   id: 10,
@@ -11,10 +11,10 @@ export const workspace = {
 };
 
 vi.mock('services/api', () => ({
-  getWorkspace: (params: GetWorkspaceParams) => {
+  getWorkspace: (params: ActionWorkspaceParams) => {
     return {
       ...workspace,
-      id: params.id,
+      id: params.workspaceId,
     };
   },
 }));

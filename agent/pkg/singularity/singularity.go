@@ -10,7 +10,6 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,6 +30,7 @@ import (
 	"github.com/determined-ai/determined/agent/pkg/events"
 	"github.com/determined-ai/determined/master/pkg/aproto"
 	"github.com/determined-ai/determined/master/pkg/cproto"
+	"github.com/determined-ai/determined/master/pkg/device"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/syncx/waitgroupx"
 	"github.com/determined-ai/determined/master/pkg/tasks"
@@ -39,8 +39,6 @@ import (
 var singularityWrapperEntrypoint = path.Join(tasks.RunDir, tasks.SingularityEntrypointWrapperScript)
 
 const (
-	// TODO(DET-9111): Parameterize this by agent ID.
-	agentTmp         = "/tmp/determined/agent"
 	hostNetworking   = "host"
 	bridgeNetworking = "bridge"
 	envFileName      = "envfile"
@@ -63,10 +61,17 @@ type SingularityClient struct {
 	mu         sync.Mutex
 	wg         waitgroupx.Group
 	containers map[cproto.ID]*SingularityContainer
+	agentTmp   string
+	debug      bool
 }
 
 // New returns a new singularity client, which launches and tracks containers.
-func New(opts options.SingularityOptions) (*SingularityClient, error) {
+func New(opts options.Options) (*SingularityClient, error) {
+	agentTmp, err := cruntimes.BaseTempDirName(opts.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compose agentTmp directory path: %w", err)
+	}
+
 	if err := os.RemoveAll(agentTmp); err != nil {
 		return nil, fmt.Errorf("removing agent tmp from previous runs: %w", err)
 	}
@@ -77,9 +82,11 @@ func New(opts options.SingularityOptions) (*SingularityClient, error) {
 
 	return &SingularityClient{
 		log:        logrus.WithField("compotent", "singularity"),
-		opts:       opts,
+		opts:       opts.SingularityOptions,
 		wg:         waitgroupx.WithContext(context.Background()),
 		containers: make(map[cproto.ID]*SingularityContainer),
+		agentTmp:   agentTmp,
+		debug:      opts.Debug,
 	}, nil
 }
 
@@ -91,19 +98,10 @@ func (s *SingularityClient) Close() error {
 	// Since we launch procs with exec.CommandContext under s.wg's context, this cleans them up.
 	s.wg.Close()
 
-	if err := os.RemoveAll(agentTmp); err != nil {
+	if err := os.RemoveAll(s.agentTmp); err != nil {
 		return fmt.Errorf("cleaning up agent tmp: %w", err)
 	}
 	return nil
-}
-
-func getPullCommand(req docker.PullImage, image string) (string, []string) {
-	args := []string{"pull"}
-	if req.ForcePull {
-		args = append(args, "--force")
-	}
-	args = append(args, image)
-	return "singularity", args
 }
 
 // PullImage implements container.ContainerRuntime.
@@ -112,7 +110,8 @@ func (s *SingularityClient) PullImage(
 	req docker.PullImage,
 	p events.Publisher[docker.Event],
 ) (err error) {
-	return cruntimes.PullImage(ctx, req, p, &s.wg, s.log, getPullCommand)
+	// Singularity pull outputs a file, so skip it
+	return nil
 }
 
 // CreateContainer implements container.ContainerRuntime.
@@ -166,7 +165,7 @@ func (s *SingularityClient) RunContainer(
 		)
 	}
 
-	tmpdir, err := os.MkdirTemp(agentTmp, fmt.Sprintf("*-%s", id))
+	tmpdir, err := os.MkdirTemp(s.agentTmp, fmt.Sprintf("*-%s", id))
 	if err != nil {
 		return nil, fmt.Errorf("making tmp dir for archives: %w", err)
 	}
@@ -265,16 +264,6 @@ func (s *SingularityClient) RunContainer(
 	}
 
 	for _, m := range req.HostConfig.Mounts {
-		// TODO(DET-9079): Investigate handling these options.
-		if m.ReadOnly {
-			if err = p.Publish(ctx, docker.NewLogEvent(model.LogLevelWarning, fmt.Sprintf(
-				"mount %s:%s was requested as readonly but singularity does not support this; "+
-					"will bind mount anyway, without it being readonly",
-				m.Source, m.Target,
-			))); err != nil {
-				return nil, err
-			}
-		}
 		if m.BindOptions != nil && m.BindOptions.Propagation != "rprivate" { // rprivate is default.
 			if err = p.Publish(ctx, docker.NewLogEvent(model.LogLevelWarning, fmt.Sprintf(
 				"mount %s:%s had propagation settings but singularity does not support this; "+
@@ -284,7 +273,11 @@ func (s *SingularityClient) RunContainer(
 				return nil, err
 			}
 		}
-		args = append(args, "--bind", fmt.Sprintf("%s:%s", m.Source, m.Target))
+		bindMountTemplate := "%s:%s"
+		if m.ReadOnly {
+			bindMountTemplate += ":ro"
+		}
+		args = append(args, "--bind", fmt.Sprintf(bindMountTemplate, m.Source, m.Target))
 	}
 
 	if shmsize := req.HostConfig.ShmSize; shmsize != 4294967296 { // 4294967296 is the default.
@@ -297,15 +290,10 @@ func (s *SingularityClient) RunContainer(
 		}
 	}
 
-	// TODO(DET-9075): Un-dockerize the RunContainer API so we can know to pass `--rocm` without
-	// regexing on devices.
 	// TODO(DET-9080): Test this on ROCM devices.
-	rocmDevice := regexp.MustCompile("/dev/dri/by-path/pci-.*-card")
-	for _, d := range req.HostConfig.Devices {
-		if rocmDevice.MatchString(d.PathOnHost) {
-			args = append(args, "--rocm")
-			break
-		}
+	s.log.Tracef("Device type is %s", req.DeviceType)
+	if req.DeviceType == device.ROCM {
+		args = append(args, "--rocm")
 	}
 
 	// Visible devices are set later by modifying the exec.Command's env.
@@ -321,16 +309,7 @@ func (s *SingularityClient) RunContainer(
 		args = append(args, "--nv")
 	}
 
-	// TODO(DET-9079): It is unlikely we can handle this, but we should do better at documenting.
-	if len(req.HostConfig.CapAdd) != 0 || len(req.HostConfig.CapDrop) != 0 {
-		if err = p.Publish(ctx, docker.NewLogEvent(model.LogLevelWarning, fmt.Sprintf(
-			"cap add or drop was requested but singularity does not support this; "+
-				"will be ignored (cap_add: %+v, cap_drop: %+v)", req.HostConfig.CapAdd,
-			req.HostConfig.CapDrop,
-		))); err != nil {
-			return nil, err
-		}
-	}
+	args = capabilitiesToSingularityArgs(req, args)
 
 	image := cruntimes.CanonicalizeImage(req.ContainerConfig.Image)
 	args = append(args, image)
@@ -359,6 +338,10 @@ func (s *SingularityClient) RunContainer(
 		fmt.Sprintf("SINGULARITYENV_CUDA_VISIBLE_DEVICES=%s", cudaVisibleDevicesVar),
 		fmt.Sprintf("APPTAINERENV_CUDA_VISIBLE_DEVICES=%s", cudaVisibleDevicesVar),
 	)
+	if s.debug {
+		cmd.Env = append(cmd.Env, "DET_DEBUG=1")
+	}
+	s.addOptionalRegistryAuthCredentials(req, cmd)
 	addEnvironmentValueIfSet([]string{"http_proxy", "https_proxy", "no_proxy"}, cmd)
 
 	// HACK(singularity): without this, --nv doesn't work right. If the singularity run command
@@ -402,6 +385,27 @@ func (s *SingularityClient) RunContainer(
 		},
 		ContainerWaiter: s.waitOnContainer(cproto.ID(id), cont, p),
 	}, nil
+}
+
+func (s *SingularityClient) addOptionalRegistryAuthCredentials(req cproto.RunSpec, cmd *exec.Cmd) {
+	s.log.Trace("Checking for supplied credentials")
+	if req.Registry != nil {
+		cmd.Env = append(cmd.Env,
+			fmt.Sprintf("SINGULARITY_DOCKER_USERNAME=%s", req.Registry.Username),
+			fmt.Sprintf("SINGULARITY_DOCKER_PASSWORD=%s", req.Registry.Password),
+			fmt.Sprintf("APPTAINER_DOCKER_USERNAME=%s", req.Registry.Username),
+			fmt.Sprintf("APPTAINER_DOCKER_PASSWORD=%s", req.Registry.Password))
+	}
+}
+
+func capabilitiesToSingularityArgs(req cproto.RunSpec, args []string) []string {
+	if len(req.HostConfig.CapAdd) > 0 {
+		args = append(args, "--add-caps", strings.Join(req.HostConfig.CapAdd, ","))
+	}
+	if len(req.HostConfig.CapDrop) > 0 {
+		args = append(args, "--drop-caps", strings.Join(req.HostConfig.CapDrop, ","))
+	}
+	return args
 }
 
 func addEnvironmentValueIfSet(variables []string, cmd *exec.Cmd) {

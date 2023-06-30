@@ -3,6 +3,7 @@ import { SortOrder } from 'antd/es/table/interface';
 import { FilterDropdownProps } from 'antd/lib/table/interface';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import dropdownCss from 'components/ActionDropdown/ActionDropdown.module.scss';
 import ConfigureAgentModalComponent from 'components/ConfigureAgentModal';
 import CreateUserModalComponent from 'components/CreateUserModal';
 import Button from 'components/kit/Button';
@@ -24,19 +25,18 @@ import usePermissions from 'hooks/usePermissions';
 import { useSettings } from 'hooks/useSettings';
 import { getGroups, patchUser } from 'services/api';
 import { V1GetUsersRequestSortBy, V1GroupSearchResult } from 'services/api-ts-sdk';
-import dropdownCss from 'shared/components/ActionDropdown/ActionDropdown.module.scss';
-import { isEqual } from 'shared/utils/data';
-import { ErrorType } from 'shared/utils/error';
-import { validateDetApiEnum } from 'shared/utils/service';
-import { alphaNumericSorter, booleanSorter, numericSorter } from 'shared/utils/sort';
 import determinedStore from 'stores/determinedInfo';
 import roleStore from 'stores/roles';
 import userStore from 'stores/users';
 import { DetailedUser } from 'types';
+import { isEqual } from 'utils/data';
 import { message } from 'utils/dialogApi';
+import { ErrorType } from 'utils/error';
 import handleError from 'utils/error';
 import { Loadable } from 'utils/loadable';
 import { useObservable } from 'utils/observable';
+import { validateDetApiEnum } from 'utils/service';
+import { alphaNumericSorter, booleanSorter, numericSorter } from 'utils/sort';
 
 import css from './UserManagement.module.scss';
 import settingsConfig, {
@@ -116,7 +116,7 @@ const UserActionDropdown = ({ fetchUsers, user, groups, userManagementEnabled }:
           EditUserModal.open();
           break;
         case MenuKey.Groups: {
-          const response = await getGroups({ userId: user.id });
+          const response = await getGroups({ limit: 500, userId: user.id });
           setSelectedUserGroups(response.groups ?? []);
           ManageGroupsModal.open();
           break;
@@ -176,7 +176,7 @@ const UserManagement: React.FC = () => {
 
   const fetchGroups = useCallback(async (): Promise<void> => {
     try {
-      const response = await getGroups({}, { signal: canceler.current.signal });
+      const response = await getGroups({ limit: 500 }, { signal: canceler.current.signal });
 
       setGroups((prev) => {
         if (isEqual(prev, response.groups)) return prev;

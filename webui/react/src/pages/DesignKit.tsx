@@ -13,6 +13,7 @@ import Checkbox from 'components/kit/Checkbox';
 import ClipboardButton from 'components/kit/ClipboardButton';
 import CodeEditor from 'components/kit/CodeEditor';
 import { Column, Columns } from 'components/kit/Columns';
+import Drawer from 'components/kit/Drawer';
 import Dropdown, { MenuItem } from 'components/kit/Dropdown';
 import Empty from 'components/kit/Empty';
 import Facepile from 'components/kit/Facepile';
@@ -21,12 +22,15 @@ import Icon, { IconNameArray, IconSizeArray } from 'components/kit/Icon';
 import Input from 'components/kit/Input';
 import InputNumber from 'components/kit/InputNumber';
 import InputSearch from 'components/kit/InputSearch';
+import InputShortcut from 'components/kit/InputShortcut';
+import { TypographySize } from 'components/kit/internal/fonts';
 import { LineChart, Serie } from 'components/kit/LineChart';
 import { useChartGrid } from 'components/kit/LineChart/useChartGrid';
 import { XAxisDomain } from 'components/kit/LineChart/XAxisFilter';
 import LogViewer from 'components/kit/LogViewer/LogViewer';
 import { Modal, useModal } from 'components/kit/Modal';
 import Nameplate from 'components/kit/Nameplate';
+import Notes, { Props as NotesProps } from 'components/kit/Notes';
 import Pagination from 'components/kit/Pagination';
 import Pivot from 'components/kit/Pivot';
 import Select, { Option } from 'components/kit/Select';
@@ -34,7 +38,6 @@ import Toggle from 'components/kit/Toggle';
 import Tooltip from 'components/kit/Tooltip';
 import Header from 'components/kit/Typography/Header';
 import Paragraph from 'components/kit/Typography/Paragraph';
-import { useNoteDemo, useNotesDemo } from 'components/kit/useNoteDemo';
 import UserAvatar from 'components/kit/UserAvatar';
 import { useTags } from 'components/kit/useTags';
 import Label from 'components/Label';
@@ -44,12 +47,14 @@ import ResponsiveTable from 'components/Table/ResponsiveTable';
 import ThemeToggle from 'components/ThemeToggle';
 import { drawPointsPlugin } from 'components/UPlot/UPlotChart/drawPointsPlugin';
 import { tooltipsPlugin } from 'components/UPlot/UPlotChart/tooltipsPlugin';
+import { CheckpointsDict } from 'pages/TrialDetails/F_TrialDetailsOverview';
+import { serverAddress } from 'routes/utils';
 import { V1LogLevel } from 'services/api-ts-sdk';
 import { mapV1LogsResponse } from 'services/decoder';
-import useUI from 'shared/contexts/stores/UI';
-import { ValueOf } from 'shared/types';
-import { noOp } from 'shared/utils/service';
+import useUI from 'stores/contexts/UI';
 import { BrandingType } from 'stores/determinedInfo';
+import { ValueOf } from 'types';
+import { Note } from 'types';
 import { MetricType, User } from 'types';
 import {
   Background,
@@ -61,14 +66,15 @@ import {
   Status,
   Surface,
 } from 'utils/colors';
-import { TypographySize } from 'utils/fonts';
+import handleError from 'utils/error';
 import { Loaded, NotLoaded } from 'utils/loadable';
 import loremIpsum from 'utils/loremIpsum';
+import { noOp } from 'utils/service';
+import { KeyboardShortcut } from 'utils/shortcut';
 
 import useConfirm, { voidPromiseFn } from '../components/kit/useConfirm';
 
 import css from './DesignKit.module.scss';
-import { CheckpointsDict } from './TrialDetails/F_TrialDetailsOverview';
 
 const ComponentTitles = {
   Accordion: 'Accordion',
@@ -81,6 +87,7 @@ const ComponentTitles = {
   CodeEditor: 'CodeEditor',
   Color: 'Color',
   Columns: 'Columns',
+  Drawer: 'Drawer',
   Dropdown: 'Dropdown',
   Empty: 'Empty',
   Facepile: 'Facepile',
@@ -89,6 +96,7 @@ const ComponentTitles = {
   Input: 'Input',
   InputNumber: 'InputNumber',
   InputSearch: 'InputSearch',
+  InputShortcut: 'InputShortcut',
   Lists: 'Lists (tables)',
   LogViewer: 'LogViewer',
   Modals: 'Modals',
@@ -127,6 +135,10 @@ const ComponentSection: React.FC<Props> = ({ children, id, title }: Props): JSX.
 };
 
 const ButtonsSection: React.FC = () => {
+  const menu: MenuItem[] = [
+    { key: 'start', label: 'Start' },
+    { key: 'stop', label: 'Stop' },
+  ];
   return (
     <ComponentSection id="Buttons" title="Buttons">
       <AntDCard>
@@ -246,8 +258,29 @@ const ButtonsSection: React.FC = () => {
         </Space>
         <hr />
         <strong>Default Button with icon</strong>
+        With SVG Icon
         <Space>
-          <Button icon={<PoweroffOutlined />}>ButtonWithIcon</Button>
+          <Button icon={<PoweroffOutlined />} />
+          <Button icon={<PoweroffOutlined />}>ButtonText</Button>
+        </Space>
+        With Font Icon
+        <Space>
+          <Button icon={<Icon name="play" size="large" title="Play" />} />
+          <Button icon={<Icon name="play" size="large" title="Play" />}>
+            ButtonWithLargeFontIcon
+          </Button>
+          <Button icon={<Icon name="play" size="tiny" title="Play" />}>
+            ButtonWithTinyFontIcon
+          </Button>
+        </Space>
+        As Dropdown trigger
+        <Space>
+          <Dropdown menu={menu}>
+            <Button icon={<Icon name="play" size="large" title="Play" />}>Font icon Button</Button>
+          </Dropdown>
+          <Dropdown menu={menu}>
+            <Button icon={<PoweroffOutlined />}>SVG icon Button</Button>
+          </Dropdown>
         </Space>
         <hr />
         <strong>Button with icon and text displayed in a column</strong>
@@ -585,7 +618,13 @@ const ChartsSection: React.FC = () => {
           <Button onClick={randomizeLineData}>Randomize line data</Button>
           <Button onClick={streamLineData}>Stream line data</Button>
         </div>
-        <LineChart height={250} series={[line1, line2]} showLegend={true} title="Sample" />
+        <LineChart
+          handleError={handleError}
+          height={250}
+          series={[line1, line2]}
+          showLegend={true}
+          title="Sample"
+        />
       </AntDCard>
       <AntDCard title="Focus series">
         <p>Highlight a specific metric in the chart.</p>
@@ -593,14 +632,32 @@ const ChartsSection: React.FC = () => {
           <Button onClick={randomizeLineData}>Randomize line data</Button>
           <Button onClick={streamLineData}>Stream line data</Button>
         </div>
-        <LineChart focusedSeries={1} height={250} series={[line1, line2]} title="Sample" />
+        <LineChart
+          focusedSeries={1}
+          handleError={handleError}
+          height={250}
+          series={[line1, line2]}
+          title="Sample"
+        />
       </AntDCard>
       <AntDCard title="States without data">
         <strong>Loading</strong>
-        <LineChart height={250} series={NotLoaded} showLegend={true} title="Loading state" />
+        <LineChart
+          handleError={handleError}
+          height={250}
+          series={NotLoaded}
+          showLegend={true}
+          title="Loading state"
+        />
         <hr />
         <strong>Empty</strong>
-        <LineChart height={250} series={[]} showLegend={true} title="Empty state" />
+        <LineChart
+          handleError={handleError}
+          height={250}
+          series={[]}
+          showLegend={true}
+          title="Empty state"
+        />
       </AntDCard>
       <AntDCard title="Chart Grid">
         <p>
@@ -641,6 +698,7 @@ const ChartsSection: React.FC = () => {
               xLabel: xAxis,
             },
           ],
+          handleError,
           onXAxisChange: setXAxis,
           xAxis: xAxis,
         })}
@@ -648,6 +706,7 @@ const ChartsSection: React.FC = () => {
         <strong>Loading</strong>
         {createChartGrid({
           chartsProps: NotLoaded,
+          handleError,
           onXAxisChange: setXAxis,
           xAxis: xAxis,
         })}
@@ -655,6 +714,7 @@ const ChartsSection: React.FC = () => {
         <strong>Empty</strong>
         {createChartGrid({
           chartsProps: [],
+          handleError,
           onXAxisChange: setXAxis,
           xAxis: xAxis,
         })}
@@ -827,6 +887,7 @@ const CodeEditorSection: React.FC = () => {
               title: 'test.py',
             },
           ]}
+          onError={handleError}
         />
         <strong>Read-only YAML file</strong>
         <CodeEditor
@@ -840,6 +901,7 @@ const CodeEditorSection: React.FC = () => {
             },
           ]}
           readonly={true}
+          onError={handleError}
         />
         <strong>Multiple files, one not finished loading.</strong>
         <CodeEditor
@@ -861,6 +923,7 @@ const CodeEditorSection: React.FC = () => {
             { content: NotLoaded, isLeaf: true, key: 'unloaded.yaml', title: 'unloaded.yaml' },
           ]}
           readonly={true}
+          onError={handleError}
         />
       </AntDCard>
     </ComponentSection>
@@ -917,6 +980,28 @@ const InputSearchSection: React.FC = () => {
         <hr />
         <strong>Search box with scopes</strong>
         <p>Not implemented</p>
+      </AntDCard>
+    </ComponentSection>
+  );
+};
+
+const InputShortcutSection: React.FC = () => {
+  const [value, setValue] = useState<KeyboardShortcut>();
+  const onChange = (k: KeyboardShortcut | undefined) => {
+    setValue(k);
+  };
+  return (
+    <ComponentSection id="InputShortcut" title="InputShortcut">
+      <AntDCard>
+        <p>
+          An input box (<code>{'<InputShortcut>'}</code>) for keyboard shortcuts.
+        </p>
+      </AntDCard>
+      <AntDCard title="Usage">
+        <strong>Default Input for Shortcut</strong>
+        <InputShortcut />
+        <strong>Controlled Input for Shortcut</strong>
+        <InputShortcut value={value} onChange={onChange} />
       </AntDCard>
     </ComponentSection>
   );
@@ -1251,6 +1336,30 @@ const FacepileSection: React.FC = () => {
         </ul>
       </AntDCard>
     </ComponentSection>
+  );
+};
+
+const useNoteDemo = (): ((props?: Omit<NotesProps, 'multiple'>) => JSX.Element) => {
+  const [note, setNote] = useState<Note>({ contents: '', name: 'Untitled' });
+  const onSave = async (n: Note) => await setNote(n);
+  return (props) => <Notes onError={handleError} {...props} notes={note} onSave={onSave} />;
+};
+
+const useNotesDemo = (): ((props?: NotesProps) => JSX.Element) => {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const onDelete = (p: number) => setNotes((n) => n.filter((_, idx) => idx !== p));
+  const onNewPage = () => setNotes((n) => [...n, { contents: '', name: 'Untitled' }]);
+  const onSave = async (n: Note[]) => await setNotes(n);
+  return (props) => (
+    <Notes
+      {...props}
+      multiple
+      notes={notes}
+      onDelete={onDelete}
+      onError={handleError}
+      onNewPage={onNewPage}
+      onSave={onSave}
+    />
   );
 };
 
@@ -1609,7 +1718,13 @@ const LogViewerSection: React.FC = () => {
       <AntDCard title="Usage">
         <strong>LogViewer default</strong>
         <div style={{ height: '300px' }}>
-          <LogViewer decoder={mapV1LogsResponse} initialLogs={sampleLogs} sortKey="id" />
+          <LogViewer
+            decoder={mapV1LogsResponse}
+            initialLogs={sampleLogs}
+            serverAddress={serverAddress}
+            sortKey="id"
+            onError={handleError}
+          />
         </div>
         <strong>Considerations</strong>
         <ul>
@@ -2297,6 +2412,7 @@ const FormModalComponent: React.FC<{ value: string; fail?: boolean }> = ({ value
     <Modal
       cancel
       submit={{
+        handleError,
         handler: () => handleSubmit(fail),
         text: 'Submit',
       }}
@@ -2352,6 +2468,7 @@ const ValidationModalComponent: React.FC<{ value: string }> = ({ value }) => {
       cancel
       submit={{
         disabled: !alias,
+        handleError,
         handler: handleSubmit,
         text: 'Submit',
       }}
@@ -2381,8 +2498,15 @@ const ModalSection: React.FC = () => {
 
   const confirm = useConfirm();
   const config = { content: text, title: text };
-  const confirmDefault = () => confirm({ ...config, onConfirm: voidPromiseFn });
-  const confirmDangerous = () => confirm({ ...config, danger: true, onConfirm: voidPromiseFn });
+  const confirmDefault = () =>
+    confirm({ ...config, onConfirm: voidPromiseFn, onError: handleError });
+  const confirmDangerous = () =>
+    confirm({
+      ...config,
+      danger: true,
+      onConfirm: voidPromiseFn,
+      onError: handleError,
+    });
 
   return (
     <ComponentSection id="Modals" title="Modals">
@@ -2581,6 +2705,68 @@ const AccordionSection: React.FC = () => {
   );
 };
 
+const DrawerSection: React.FC = () => {
+  const [openLeft, setOpenLeft] = useState(false);
+  const [openRight, setOpenRight] = useState(false);
+  const scrollLines = [];
+  for (let i = 0; i < 100; i++) {
+    scrollLines.push(i);
+  }
+
+  return (
+    <ComponentSection id="Drawer" title="Drawer">
+      <AntDCard>
+        <p>
+          An <code>{'<Drawer>'}</code> is a full-height overlaid sidebar which moves into the
+          viewport from the left or right side.
+        </p>
+      </AntDCard>
+      <AntDCard title="Left side">
+        <p>
+          Drawer appears from the left side in an animation. Similar to a Modal, it can be closed
+          only by clicking a Close button (at top right) or Escape key.
+        </p>
+        <p>If the drawer body has extra content, it is scrollable without hiding the header.</p>
+        <Space>
+          <Button onClick={() => setOpenLeft(true)}>Open Drawer</Button>
+        </Space>
+        <Drawer
+          open={openLeft}
+          placement="left"
+          title="Left Drawer"
+          onClose={() => setOpenLeft(!openLeft)}>
+          {scrollLines.map((i) => (
+            <p key={i}>Sample scrollable content</p>
+          ))}
+        </Drawer>
+      </AntDCard>
+      <AntDCard title="Right side">
+        <p>Drawer appears from the right side.</p>
+        <p>
+          When a drawer has stateful content, that state is persisted when closed and re-opened.
+        </p>
+        <Space>
+          <Button onClick={() => setOpenRight(true)}>Open Drawer</Button>
+        </Space>
+        <Drawer
+          open={openRight}
+          placement="right"
+          title="Right Drawer"
+          onClose={() => setOpenRight(!openRight)}>
+          <p>Sample content</p>
+          <Checkbox>A</Checkbox>
+          <Checkbox>B</Checkbox>
+          <Checkbox>C</Checkbox>
+          <Checkbox>D</Checkbox>
+          <Form.Item label="Sample Persistent Input" name="sample_drawer">
+            <Input.TextArea />
+          </Form.Item>
+        </Drawer>
+      </AntDCard>
+    </ComponentSection>
+  );
+};
+
 const Components = {
   Accordion: <AccordionSection />,
   Breadcrumbs: <BreadcrumbsSection />,
@@ -2592,6 +2778,7 @@ const Components = {
   CodeEditor: <CodeEditorSection />,
   Color: <ColorSection />,
   Columns: <ColumnsSection />,
+  Drawer: <DrawerSection />,
   Dropdown: <DropdownSection />,
   Empty: <EmptySection />,
   Facepile: <FacepileSection />,
@@ -2600,6 +2787,7 @@ const Components = {
   Input: <InputSection />,
   InputNumber: <InputNumberSection />,
   InputSearch: <InputSearchSection />,
+  InputShortcut: <InputShortcutSection />,
   Lists: <ListsSection />,
   LogViewer: <LogViewerSection />,
   Modals: <ModalSection />,
@@ -2624,6 +2812,15 @@ const DesignKit: React.FC = () => {
   useEffect(() => {
     actions.hideChrome();
   }, [actions]);
+
+  useEffect(() => {
+    // move to the specified anchor tag in the url after refreshing page
+    if (window.location.hash) {
+      const hashSave = window.location.hash;
+      window.location.hash = ''; // clear hash first
+      window.location.hash = hashSave; // set hash again
+    }
+  }, []);
 
   return (
     <Page bodyNoPadding breadcrumb={[]} docTitle="Design Kit">

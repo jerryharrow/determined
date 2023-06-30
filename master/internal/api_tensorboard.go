@@ -127,7 +127,7 @@ func (a *apiServer) GetTensorboard(
 	if err := command.AuthZProvider.Get().CanGetTensorboard(
 		ctx, *curUser, model.AccessScopeID(resp.Tensorboard.WorkspaceId),
 		resp.Tensorboard.ExperimentIds, resp.Tensorboard.TrialIds); err != nil {
-		return nil, authz.SubIfUnauthorized(err, errActorNotFound(addr))
+		return nil, authz.SubIfUnauthorized(err, api.NotFoundErrs("actor", fmt.Sprint(addr), true))
 	}
 	return resp, nil
 }
@@ -203,25 +203,27 @@ func (a *apiServer) LaunchTensorboard(
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
+	user, _, err := grpcutil.GetUser(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
+	}
+
 	spec, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
+		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,
 		MustZeroSlot: true,
-	})
+	}, user)
 	if err != nil {
-		return nil, api.APIErrToGRPC(errors.Wrapf(err, "failed to prepare launch params"))
-	}
-
-	spec.Metadata.WorkspaceID = model.DefaultWorkspaceID
-	if req.WorkspaceId != 0 {
-		spec.Metadata.WorkspaceID = model.AccessScopeID(req.WorkspaceId)
+		return nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
+			"failed to prepare launch params")
 	}
 	spec.TaskType = model.TaskTypeTensorboard
 	spec.Metadata.ExperimentIDs = req.ExperimentIds
 	spec.Metadata.TrialIDs = req.TrialIds
 
-	if err = a.isNTSCPermittedToLaunch(ctx, spec); err != nil {
+	if err = a.isNTSCPermittedToLaunch(ctx, spec, user); err != nil {
 		return nil, err
 	}
 
@@ -331,15 +333,6 @@ func (a *apiServer) LaunchTensorboard(
 				logBasePath = fmt.Sprintf("gs://%s", filepath.Join(c.Bucket(), *prefix))
 			} else {
 				logBasePath = fmt.Sprintf("gs://%s", c.Bucket())
-			}
-
-		case expconf.HDFSConfig:
-			logBasePath = "hdfs://" + c.Path()
-
-			// The credentials files for HDFS exist on agent machines and are
-			// bind mounted into the container.
-			for _, mount := range exp.Config.BindMounts {
-				uniqMounts[mount.ContainerPath()] = model.ToModelBindMount(mount)
 			}
 
 		default:

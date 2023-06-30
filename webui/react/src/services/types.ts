@@ -1,6 +1,6 @@
 import { Dayjs } from 'dayjs';
 
-import { FetchOptions, RecordKey, SingleEntityParams } from 'shared/types';
+import { FetchOptions, RecordKey, SingleEntityParams } from 'types';
 import {
   DetailedUser,
   Job,
@@ -320,7 +320,8 @@ export interface GetJobQParams extends PaginationParams, FetchOptions {
   states?: Api.Jobv1State[];
 }
 
-export interface GetJobsResponse extends Api.V1GetJobsResponse {
+export interface GetJobsResponse {
+  pagination: Api.V1Pagination;
   jobs: Job[];
 }
 export interface GetJobQStatsParams extends FetchOptions {
@@ -439,10 +440,6 @@ export interface GetWorkspacesParams extends PaginationParams {
   users?: string[];
 }
 
-export interface GetWorkspaceParams {
-  id: number;
-}
-
 export interface GetWorkspaceProjectsParams extends PaginationParams {
   archived?: boolean;
   id: number;
@@ -463,10 +460,6 @@ export interface GetWorkspaceModelsParams {
 export interface GetWorkspaceMembersParams {
   nameFilter?: string;
   workspaceId: number;
-}
-
-export interface DeleteWorkspaceParams {
-  id: number;
 }
 
 export interface DeleteProjectParams {
@@ -491,17 +484,9 @@ export interface GetProjectColumnsParams {
   id: number;
 }
 
-export interface ArchiveWorkspaceParams {
-  id: number;
+export interface ActionWorkspaceParams {
+  workspaceId: number;
 }
-
-export type UnarchiveWorkspaceParams = ArchiveWorkspaceParams;
-
-export interface PinWorkspaceParams {
-  id: number;
-}
-
-export type UnpinWorkspaceParams = PinWorkspaceParams;
 
 export interface GetWebhookParams {
   id: number;
@@ -515,4 +500,13 @@ export interface SearchRolesAssignableToScopeParams {
 
 export interface GetProjectsByUserActivityParams {
   limit?: number;
+}
+
+export interface GetResourcePoolBindingsParams {
+  resourcePoolName: string;
+}
+
+export interface ModifyResourcePoolBindingsParams {
+  resourcePoolName: string;
+  workspaceIds: number[];
 }

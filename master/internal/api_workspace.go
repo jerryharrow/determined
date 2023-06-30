@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/determined-ai/determined/master/internal/api"
 	"github.com/determined-ai/determined/master/internal/authz"
 	"github.com/determined-ai/determined/master/internal/command"
 	"github.com/determined-ai/determined/master/internal/db"
@@ -69,7 +70,7 @@ func validateWorkspaceName(name string) error {
 func (a *apiServer) GetWorkspaceByID(
 	ctx context.Context, id int32, curUser model.User, rejectImmutable bool,
 ) (*workspacev1.Workspace, error) {
-	notFoundErr := status.Errorf(codes.NotFound, "workspace (%d) not found", id)
+	notFoundErr := api.NotFoundErrs("workspace", fmt.Sprint(id), true)
 	w := &workspacev1.Workspace{}
 
 	if err := a.m.db.QueryProto("get_workspace", w, id, curUser.ID); errors.Is(err, db.ErrNotFound) {
@@ -155,12 +156,13 @@ func (a *apiServer) GetWorkspaceProjects(
 	// Construct the ordering expression.
 	startTime := apiv1.GetWorkspaceProjectsRequest_SORT_BY_LAST_EXPERIMENT_START_TIME
 	sortColMap := map[apiv1.GetWorkspaceProjectsRequest_SortBy]string{
-		apiv1.GetWorkspaceProjectsRequest_SORT_BY_UNSPECIFIED:   "id",
-		apiv1.GetWorkspaceProjectsRequest_SORT_BY_CREATION_TIME: "created_at",
+		// `p` is an alias of `project` which is defined in master/static/srv/get_workspace_projects.sql
+		apiv1.GetWorkspaceProjectsRequest_SORT_BY_UNSPECIFIED:   "p.id",
+		apiv1.GetWorkspaceProjectsRequest_SORT_BY_CREATION_TIME: "p.created_at",
 		startTime: "last_experiment_started_at",
-		apiv1.GetWorkspaceProjectsRequest_SORT_BY_ID:          "id",
-		apiv1.GetWorkspaceProjectsRequest_SORT_BY_NAME:        "name",
-		apiv1.GetWorkspaceProjectsRequest_SORT_BY_DESCRIPTION: "description",
+		apiv1.GetWorkspaceProjectsRequest_SORT_BY_ID:          "p.id",
+		apiv1.GetWorkspaceProjectsRequest_SORT_BY_NAME:        "p.name",
+		apiv1.GetWorkspaceProjectsRequest_SORT_BY_DESCRIPTION: "p.description",
 	}
 	orderByMap := map[apiv1.OrderBy]string{
 		apiv1.OrderBy_ORDER_BY_UNSPECIFIED: "ASC",
@@ -529,6 +531,13 @@ func (a *apiServer) DeleteWorkspace(
 	log.Debugf("deleting workspace %d NTSC", req.Id)
 	command.TellNTSC(a.m.system, req)
 
+	log.Debugf("deleting workspace %d templates", req.Id)
+	_, err = db.Bun().NewDelete().Model(&model.Template{}).
+		Where("workspace_id = ?", req.Id).Exec(ctx)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error deleting workspace (%d) templates", req.Id)
+	}
+
 	if len(projects) == 0 {
 		err = a.m.db.QueryProto("delete_workspace", holder, req.Id)
 		return &apiv1.DeleteWorkspaceResponse{Completed: (err == nil)},
@@ -611,4 +620,10 @@ func (a *apiServer) UnpinWorkspace(
 
 	return &apiv1.UnpinWorkspaceResponse{},
 		errors.Wrapf(err, "error un-pinning workspace (%d)", req.Id)
+}
+
+func (a *apiServer) ListRPsBoundToWorkspace(
+	ctx context.Context, request *apiv1.ListRPsBoundToWorkspaceRequest,
+) (*apiv1.ListRPsBoundToWorkspaceResponse, error) {
+	return &apiv1.ListRPsBoundToWorkspaceResponse{}, nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/grpcutil"
 	"github.com/determined-ai/determined/master/internal/rbac/audit"
+	"github.com/determined-ai/determined/master/internal/task/idle"
 	"github.com/determined-ai/determined/master/pkg/actor"
 	"github.com/determined-ai/determined/master/pkg/archive"
 	"github.com/determined-ai/determined/master/pkg/check"
@@ -102,7 +103,8 @@ func (a *apiServer) GetNotebook(
 	if err := command.AuthZProvider.Get().CanGetNSC(
 		ctx, *curUser, model.AccessScopeID(resp.Notebook.WorkspaceId),
 	); err != nil {
-		return nil, authz.SubIfUnauthorized(err, errActorNotFound(addr))
+		return nil, authz.SubIfUnauthorized(err,
+			api.NotFoundErrs("actor", fmt.Sprint(addr), true))
 	}
 	return resp, nil
 }
@@ -126,12 +128,15 @@ func (a *apiServer) validateToKillNotebook(ctx context.Context, notebookID strin
 
 func (a *apiServer) IdleNotebook(
 	ctx context.Context, req *apiv1.IdleNotebookRequest,
-) (resp *apiv1.IdleNotebookResponse, err error) {
-	err = a.validateToKillNotebook(ctx, req.NotebookId)
+) (*apiv1.IdleNotebookResponse, error) {
+	err := a.validateToKillNotebook(ctx, req.NotebookId)
 	if err != nil {
 		return nil, err
 	}
-	return resp, a.ask(notebooksAddr.Child(req.NotebookId), req, &resp)
+	if !req.Idle {
+		idle.RecordActivity(req.NotebookId)
+	}
+	return &apiv1.IdleNotebookResponse{}, nil
 }
 
 func (a *apiServer) KillNotebook(
@@ -171,20 +176,15 @@ func (a *apiServer) SetNotebookPriority(
 // isNTSCPermittedToLaunch checks authorization to launch in a given
 // workspace.
 func (a *apiServer) isNTSCPermittedToLaunch(
-	ctx context.Context, spec *tasks.GenericCommandSpec,
+	ctx context.Context, spec *tasks.GenericCommandSpec, user *model.User,
 ) error {
 	workspaceID := spec.Metadata.WorkspaceID
 	if workspaceID == 0 {
 		return status.Errorf(codes.InvalidArgument, "workspace_id is required")
 	}
 
-	user, _, err := grpcutil.GetUser(ctx)
-	if err != nil {
-		return status.Errorf(codes.Internal, "failed to get the user: %s", err)
-	}
-
 	w := &workspacev1.Workspace{}
-	notFoundErr := status.Errorf(codes.NotFound, "workspace (%d) not found", workspaceID)
+	notFoundErr := api.NotFoundErrs("workspace", fmt.Sprint(workspaceID), true)
 	if err := a.m.db.QueryProto(
 		"get_workspace", w, workspaceID, user.ID,
 	); errors.Is(err, db.ErrNotFound) {
@@ -215,21 +215,23 @@ func (a *apiServer) isNTSCPermittedToLaunch(
 func (a *apiServer) LaunchNotebook(
 	ctx context.Context, req *apiv1.LaunchNotebookRequest,
 ) (*apiv1.LaunchNotebookResponse, error) {
+	user, _, err := grpcutil.GetUser(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
+	}
+
 	spec, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
 		TemplateName: req.TemplateName,
+		WorkspaceID:  req.WorkspaceId,
 		Config:       req.Config,
 		Files:        req.Files,
-	})
+	}, user)
 	if err != nil {
-		return nil, api.APIErrToGRPC(errors.Wrapf(err, "failed to prepare launch params"))
+		return nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
+			"failed to prepare launch params")
 	}
 
-	spec.Metadata.WorkspaceID = model.DefaultWorkspaceID
-	if req.WorkspaceId != 0 {
-		spec.Metadata.WorkspaceID = model.AccessScopeID(req.WorkspaceId)
-	}
-
-	if err = a.isNTSCPermittedToLaunch(ctx, spec); err != nil {
+	if err = a.isNTSCPermittedToLaunch(ctx, spec, user); err != nil {
 		return nil, err
 	}
 

@@ -6,14 +6,17 @@ import React, { useCallback, useMemo, useState } from 'react';
 import Icon from 'components/kit/Icon';
 import Input from 'components/kit/Input';
 import Link from 'components/Link';
+import Message, { MessageType } from 'components/Message';
+import Spinner from 'components/Spinner';
 import { paths } from 'routes/utils';
-import { getWorkspaceProjects, getWorkspaces } from 'services/api';
-import Message, { MessageType } from 'shared/components/Message';
-import Spinner from 'shared/components/Spinner';
-import { ErrorLevel, ErrorType } from 'shared/utils/error';
-import { routeToReactUrl } from 'shared/utils/routes';
+import { getWorkspaceProjects } from 'services/api';
+import workspaceStore from 'stores/workspaces';
 import { Project, Workspace } from 'types';
+import { ErrorLevel, ErrorType } from 'utils/error';
 import handleError from 'utils/error';
+import { Loadable } from 'utils/loadable';
+import { useObservable } from 'utils/observable';
+import { routeToReactUrl } from 'utils/routes';
 
 import css from './WorkspaceQuickSearch.module.scss';
 
@@ -27,10 +30,11 @@ const WorkspaceQuickSearch: React.FC<Props> = ({ children }: Props) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
 
+  const workspaceObservable = useObservable(workspaceStore.mutables);
+  const workspaces = Loadable.getOrElse([], workspaceObservable);
+
   const fetchData = useCallback(async () => {
     try {
-      const workspaceResponse = await getWorkspaces({ limit: 0, sortBy: 'SORT_BY_NAME' });
-      const filteredWorkspaces = workspaceResponse.workspaces.filter((w) => !w.immutable);
       const projectResponse = await getWorkspaceProjects({ id: 0, sortBy: 'SORT_BY_NAME' });
 
       const projectMap = new Map<number, Project[]>();
@@ -42,7 +46,7 @@ const WorkspaceQuickSearch: React.FC<Props> = ({ children }: Props) => {
       }
 
       const tempWorkspaceMap: Map<Workspace, Project[]> = new Map();
-      for (const workspace of filteredWorkspaces) {
+      for (const workspace of workspaces) {
         const projects = projectMap.get(workspace.id);
         tempWorkspaceMap.set(workspace, projects ?? []);
       }
@@ -58,7 +62,7 @@ const WorkspaceQuickSearch: React.FC<Props> = ({ children }: Props) => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [workspaces]);
 
   const onChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchText(e.target.value);
@@ -100,6 +104,7 @@ const WorkspaceQuickSearch: React.FC<Props> = ({ children }: Props) => {
             <div className={`${css.flexRow} ${css.ellipsis}`}>
               <ProjectOutlined style={{ fontSize: '16px' }} />
               <Link onClick={() => onClickProject(project)}>{project.name}</Link>
+              <span>({project.numExperiments})</span>
             </div>
           ),
         }));

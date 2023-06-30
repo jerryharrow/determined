@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/projectv1"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/determined-ai/determined/master/internal/db"
 	expauth "github.com/determined-ai/determined/master/internal/experiment"
 	"github.com/determined-ai/determined/master/internal/project"
+	pkgTemplate "github.com/determined-ai/determined/master/internal/template"
 	"github.com/determined-ai/determined/master/pkg/archive"
 	"github.com/determined-ai/determined/master/pkg/model"
 	"github.com/determined-ai/determined/master/pkg/protoutils"
@@ -81,8 +85,7 @@ func echoGetExperimentAndCheckCanDoActions(ctx context.Context, c echo.Context, 
 ) (*model.Experiment, model.User, error) {
 	user := c.(*detContext.DetContext).MustGetUser()
 	e, err := db.ExperimentByID(ctx, expID)
-
-	expNotFound := echo.NewHTTPError(http.StatusNotFound, "experiment not found: %d", expID)
+	expNotFound := api.NotFoundErrs("experiment", fmt.Sprint(expID), false)
 	if errors.Is(err, db.ErrNotFound) {
 		return nil, model.User{}, expNotFound
 	} else if err != nil {
@@ -221,34 +224,24 @@ func (m *Master) getExperimentModelDefinition(c echo.Context) error {
 	return c.Blob(http.StatusOK, "application/x-gtar", modelDef)
 }
 
-// ErrProjectNotFound is returned in parseCreateExperiment for when project cannot be found
-// or when project cannot be viewed due to RBAC restrictions.
-type ErrProjectNotFound string
-
-// Error implements the error interface.
-func (p ErrProjectNotFound) Error() string {
-	return string(p)
-}
-
 func getCreateExperimentsProject(
 	m *Master, req *apiv1.CreateExperimentRequest, user *model.User, config expconf.ExperimentConfig,
 ) (*projectv1.Project, error) {
 	// Place experiment in Uncategorized, unless project set in request params or config.
 	var err error
-	projectID := 1
-	errProjectNotFound := ErrProjectNotFound(fmt.Sprintf("project (%d) not found", projectID))
+	projectID := model.DefaultProjectID
+	errProjectNotFound := api.NotFoundErrs("project", fmt.Sprint(projectID), true)
 	if req.ProjectId > 1 {
 		projectID = int(req.ProjectId)
-		errProjectNotFound = ErrProjectNotFound(fmt.Sprintf("project (%d) not found", projectID))
+		errProjectNotFound = api.NotFoundErrs("project", fmt.Sprint(projectID), true)
 	} else {
 		if (config.Workspace() == "") != (config.Project() == "") {
 			return nil,
 				errors.New("workspace and project must both be included in config if one is provided")
 		}
 		if config.Workspace() != "" && config.Project() != "" {
-			errProjectNotFound = ErrProjectNotFound(fmt.Sprintf(
-				"workspace '%s' or project '%s' not found",
-				config.Workspace(), config.Project()))
+			errProjectNotFound = api.NotFoundErrs("workspace/project",
+				config.Workspace()+"/"+config.Project(), true)
 
 			projectID, err = m.db.ProjectByName(config.Workspace(), config.Project())
 			if errors.Is(err, db.ErrNotFound) {
@@ -271,9 +264,39 @@ func getCreateExperimentsProject(
 	return p, nil
 }
 
+// unmarshalTemplateConfig unmarshals the template config into `o` and returns api-ready errors.
+func (m *Master) unmarshalTemplateConfig(ctx context.Context, templateName string,
+	user *model.User, out interface{}, disallowUnknownFields bool,
+) error {
+	notFoundErr := status.Errorf(codes.InvalidArgument,
+		api.NotFoundErrMsg("temlpate", fmt.Sprint(templateName)))
+	template, err := m.db.TemplateByName(templateName)
+	if err != nil {
+		return notFoundErr
+	}
+	permErr, err := pkgTemplate.AuthZProvider.Get().CanViewTemplate(ctx,
+		user, model.AccessScopeID(template.WorkspaceID))
+	if err != nil {
+		return err
+	}
+	if permErr != nil {
+		return notFoundErr
+	}
+	if disallowUnknownFields {
+		err = yaml.Unmarshal(template.Config, out, yaml.DisallowUnknownFields)
+	} else {
+		err = yaml.Unmarshal(template.Config, out)
+	}
+	if err != nil {
+		return errors.Wrapf(err, "yaml.Unmarshal(template=%s)", templateName)
+	}
+	return nil
+}
+
 func (m *Master) parseCreateExperiment(req *apiv1.CreateExperimentRequest, user *model.User) (
 	*model.Experiment, expconf.ExperimentConfig, *projectv1.Project, *tasks.TaskSpec, error,
 ) {
+	ctx := context.TODO()
 	// Read the config as the user provided it.
 	config, err := expconf.ParseAnyExperimentConfigYAML([]byte(req.Config))
 	if err != nil {
@@ -282,19 +305,11 @@ func (m *Master) parseCreateExperiment(req *apiv1.CreateExperimentRequest, user 
 
 	// Apply the template that the user specified.
 	if req.Template != nil {
-		template, terr := m.db.TemplateByName(*req.Template)
-		if terr != nil {
-			return nil, config, nil, nil, errors.Wrapf(
-				terr, "TemplateByName(%q)", *req.Template,
-			)
-		}
 		var tc expconf.ExperimentConfig
-		if yerr := yaml.Unmarshal(template.Config, &tc, yaml.DisallowUnknownFields); yerr != nil {
-			return nil, config, nil, nil, errors.Wrapf(
-				terr, "yaml.Unmarshal(template=%q)", *req.Template,
-			)
+		err := m.unmarshalTemplateConfig(ctx, *req.Template, user, &tc, true)
+		if err != nil {
+			return nil, config, nil, nil, err
 		}
-		// Merge the template into the config.
 		config = schemas.Merge(config, tc)
 	}
 
@@ -333,7 +348,7 @@ func (m *Master) parseCreateExperiment(req *apiv1.CreateExperimentRequest, user 
 	if err = db.Bun().NewSelect().Model(w).
 		Where("id = ?", project.WorkspaceId).
 		Column("checkpoint_storage_config").
-		Scan(context.TODO()); err != nil {
+		Scan(ctx); err != nil {
 		return nil, config, nil, nil, err
 	}
 	config.RawCheckpointStorage = schemas.Merge(

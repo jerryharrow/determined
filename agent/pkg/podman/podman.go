@@ -38,8 +38,6 @@ import (
 var podmanWrapperEntrypoint = path.Join(tasks.RunDir, tasks.SingularityEntrypointWrapperScript)
 
 const (
-	// TODO(DET-9111): Parameterize this by agent ID.
-	agentTmp         = "/tmp/determined/agent"
 	hostNetworking   = "host"
 	bridgeNetworking = "bridge"
 	envFileName      = "envfile"
@@ -62,10 +60,17 @@ type PodmanClient struct {
 	mu         sync.Mutex
 	wg         waitgroupx.Group
 	containers map[cproto.ID]*PodmanContainer
+	agentTmp   string
+	debug      bool
 }
 
 // New returns a new podman client, which launches and tracks containers.
-func New(opts options.PodmanOptions) (*PodmanClient, error) {
+func New(opts options.Options) (*PodmanClient, error) {
+	agentTmp, err := cruntimes.BaseTempDirName(opts.AgentID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to compose agentTmp directory path: %w", err)
+	}
+
 	if err := os.RemoveAll(agentTmp); err != nil {
 		return nil, fmt.Errorf("removing agent tmp from previous runs: %w", err)
 	}
@@ -76,9 +81,11 @@ func New(opts options.PodmanOptions) (*PodmanClient, error) {
 
 	return &PodmanClient{
 		log:        logrus.WithField("component", "podman"),
-		opts:       opts,
+		opts:       opts.PodmanOptions,
 		wg:         waitgroupx.WithContext(context.Background()),
 		containers: make(map[cproto.ID]*PodmanContainer),
+		agentTmp:   agentTmp,
+		debug:      opts.Debug,
 	}, nil
 }
 
@@ -90,7 +97,7 @@ func (s *PodmanClient) Close() error {
 	// Since we launch procs with exec.CommandContext under s.wg's context, this cleans them up.
 	s.wg.Close()
 
-	if err := os.RemoveAll(agentTmp); err != nil {
+	if err := os.RemoveAll(s.agentTmp); err != nil {
 		return fmt.Errorf("cleaning up agent tmp: %w", err)
 	}
 	return nil
@@ -163,7 +170,7 @@ func (s *PodmanClient) RunContainer(
 		)
 	}
 
-	tmpdir, err := os.MkdirTemp(agentTmp, fmt.Sprintf("*-%s", id))
+	tmpdir, err := os.MkdirTemp(s.agentTmp, fmt.Sprintf("*-%s", id))
 	if err != nil {
 		return nil, fmt.Errorf("making tmp dir for archives: %w", err)
 	}
@@ -179,7 +186,9 @@ func (s *PodmanClient) RunContainer(
 	args = append(args, "--env", "NVIDIA_VISIBLE_DEVICES")
 	args = append(args, "--env", "ROCR_VISIBLE_DEVICES")
 	args = append(args, "--env", "HIP_VISIBLE_DEVICES")
-
+	if s.debug {
+		args = append(args, "--env", "DET_DEBUG=1")
+	}
 	envFilePath := path.Join(tmpdir, envFileName)
 	envFile, err := os.OpenFile(
 		envFilePath,

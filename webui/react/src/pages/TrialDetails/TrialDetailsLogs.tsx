@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import LogViewer, {
   FetchConfig,
@@ -11,16 +11,16 @@ import {
   settingsConfigForTrial,
 } from 'components/kit/LogViewer/LogViewerSelect.settings';
 import useConfirm from 'components/kit/useConfirm';
+import Spinner from 'components/Spinner';
 import { useSettings } from 'hooks/useSettings';
 import { serverAddress } from 'routes/utils';
 import { detApi } from 'services/apiConfig';
 import { mapV1LogsResponse } from 'services/decoder';
 import { readStream } from 'services/utils';
-import Spinner from 'shared/components/Spinner';
-import useUI from 'shared/contexts/stores/UI';
-import { ErrorType } from 'shared/utils/error';
+import useUI from 'stores/contexts/UI';
 import { ExperimentBase, TrialDetails } from 'types';
 import { downloadTrialLogs } from 'utils/browser';
+import { ErrorType } from 'utils/error';
 import handleError from 'utils/error';
 
 import ClipboardButton from '../../components/kit/ClipboardButton';
@@ -38,6 +38,7 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
   const { ui } = useUI();
   const [filterOptions, setFilterOptions] = useState<Filters>({});
   const confirm = useConfirm();
+  const canceler = useRef(new AbortController());
 
   const trialSettingsConfig = useMemo(() => settingsConfigForTrial(trial?.id || -1), [trial?.id]);
   const { resetSettings, settings, updateSettings } = useSettings<Settings>(trialSettingsConfig);
@@ -55,6 +56,10 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
 
   const handleFilterChange = useCallback(
     (filters: Filters) => {
+      canceler.current.abort();
+      const newCanceler = new AbortController();
+      canceler.current = newCanceler;
+
       updateSettings({
         agentId: filters.agentIds,
         containerId: filters.containerIds,
@@ -103,6 +108,7 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
       ),
       okText: 'Proceed to Download',
       onConfirm: handleDownloadConfirm,
+      onError: handleError,
       size: 'medium',
       title: `Confirm Download for Trial ${trial.id} Logs`,
     });
@@ -148,7 +154,7 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
         options.timestampAfter ? new Date(options.timestampAfter) : undefined,
         options.orderBy as OrderBy,
         settings.searchText,
-        { signal: config.canceler.signal },
+        { signal: canceler.current.signal },
       );
     },
     [settings, trial?.id],
@@ -158,14 +164,17 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
     if (ui.isPageHidden) return;
     if (!trial?.id) return;
 
-    const canceler = new AbortController();
+    const fieldCanceler = new AbortController();
 
     readStream(
-      detApi.StreamingExperiments.trialLogsFields(trial.id, true, { signal: canceler.signal }),
+      detApi.StreamingExperiments.trialLogsFields(trial.id, true, { signal: fieldCanceler.signal }),
       (event) => setFilterOptions(event as Filters),
     );
 
-    return () => canceler.abort();
+    return () => {
+      fieldCanceler.abort();
+      canceler.current.abort();
+    };
   }, [trial?.id, ui.isPageHidden]);
 
   const logFilters = (
@@ -185,8 +194,10 @@ const TrialDetailsLogs: React.FC<Props> = ({ experiment, trial }: Props) => {
       <Spinner conditionalRender spinning={!trial}>
         <LogViewer
           decoder={mapV1LogsResponse}
+          serverAddress={serverAddress}
           title={logFilters}
           onDownload={handleDownloadLogs}
+          onError={handleError}
           onFetch={handleFetch}
         />
       </Spinner>

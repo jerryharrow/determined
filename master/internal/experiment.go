@@ -2,10 +2,13 @@ package internal
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/determined-ai/determined/master/internal/job/jobservice"
 
 	"github.com/shopspring/decimal"
 	log "github.com/sirupsen/logrus"
@@ -20,13 +23,13 @@ import (
 	"github.com/determined-ai/determined/master/internal/config"
 	"github.com/determined-ai/determined/master/internal/rm"
 	"github.com/determined-ai/determined/master/internal/rm/rmerrors"
-	"github.com/determined-ai/determined/master/internal/task"
 	"github.com/determined-ai/determined/master/internal/user"
 
 	"github.com/determined-ai/determined/master/internal/db"
 	"github.com/determined-ai/determined/master/internal/sproto"
 	"github.com/determined-ai/determined/master/internal/telemetry"
 	"github.com/determined-ai/determined/master/internal/webhooks"
+	"github.com/determined-ai/determined/master/internal/workspace"
 	"github.com/determined-ai/determined/master/pkg/actor"
 	"github.com/determined-ai/determined/master/pkg/command"
 	"github.com/determined-ai/determined/master/pkg/logger"
@@ -35,6 +38,7 @@ import (
 	"github.com/determined-ai/determined/master/pkg/schemas"
 	"github.com/determined-ai/determined/master/pkg/schemas/expconf"
 	"github.com/determined-ai/determined/master/pkg/searcher"
+	"github.com/determined-ai/determined/master/pkg/ssh"
 	"github.com/determined-ai/determined/master/pkg/tasks"
 	"github.com/determined-ai/determined/proto/pkg/apiv1"
 	"github.com/determined-ai/determined/proto/pkg/experimentv1"
@@ -102,13 +106,13 @@ type (
 
 		*model.Experiment
 		activeConfig        expconf.ExperimentConfig
-		taskLogger          *task.Logger
 		db                  *db.PgDB
 		rm                  rm.ResourceManager
 		searcher            *searcher.Searcher
 		warmStartCheckpoint *model.Checkpoint
 
-		taskSpec *tasks.TaskSpec
+		taskSpec      *tasks.TaskSpec
+		generatedKeys ssh.PrivateAndPublicKeys
 
 		faultToleranceEnabled bool
 		restored              bool
@@ -133,21 +137,25 @@ func newExperiment(
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot create an experiment: %w", err)
 	}
-	if err = m.rm.ValidateResources(m.system, poolName, resources.SlotsPerTrial(), false); err != nil {
-		return nil, nil, fmt.Errorf("validating resources: %v", err)
-	}
-	launchWarnings, err := m.rm.ValidateResourcePoolAvailability(
-		m.system,
-		poolName,
-		resources.SlotsPerTrial(),
-	)
-	if err != nil {
-		return nil, launchWarnings, fmt.Errorf("getting resource availability: %w", err)
-	}
-	if m.config.ResourceManager.AgentRM != nil && m.config.LaunchError && len(launchWarnings) > 0 {
-		return nil, nil, errors.New("slots requested exceeds cluster capacity")
-	}
 
+	var launchWarnings []command.LaunchWarning
+	if expModel.ID == 0 {
+		err := m.rm.ValidateResources(m.system, poolName, resources.SlotsPerTrial(), false)
+		if err != nil {
+			return nil, nil, fmt.Errorf("validating resources: %v", err)
+		}
+		launchWarnings, err = m.rm.ValidateResourcePoolAvailability(
+			m.system,
+			poolName,
+			resources.SlotsPerTrial(),
+		)
+		if err != nil {
+			return nil, launchWarnings, fmt.Errorf("getting resource availability: %w", err)
+		}
+		if m.config.ResourceManager.AgentRM != nil && m.config.LaunchError && len(launchWarnings) > 0 {
+			return nil, nil, errors.New("slots requested exceeds cluster capacity")
+		}
+	}
 	resources.SetResourcePool(poolName)
 	activeConfig.SetResources(resources)
 
@@ -177,16 +185,21 @@ func newExperiment(
 
 	taskSpec.AgentUserGroup = agentUserGroup
 
+	generatedKeys, err := ssh.GenerateKey(taskSpec.SSHRsaSize, nil)
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "generating ssh keys for trials")
+	}
+
 	return &experiment{
 		Experiment:          expModel,
 		activeConfig:        activeConfig,
-		taskLogger:          m.taskLogger,
 		db:                  m.db,
 		rm:                  m.rm,
 		searcher:            search,
 		warmStartCheckpoint: checkpoint,
 
-		taskSpec: taskSpec,
+		taskSpec:      taskSpec,
+		generatedKeys: generatedKeys,
 
 		faultToleranceEnabled: true,
 
@@ -246,10 +259,7 @@ func (e *experiment) Receive(ctx *actor.Context) error {
 			return err
 		}
 
-		ctx.Self().System().TellAt(sproto.JobsActorAddr, sproto.RegisterJob{
-			JobID:    e.JobID,
-			JobActor: ctx.Self(),
-		})
+		jobservice.Default.RegisterJob(e.JobID, ctx.Self())
 
 		if e.restored {
 			j, err := e.db.JobByID(e.JobID)
@@ -378,7 +388,13 @@ func (e *experiment) Receive(ctx *actor.Context) error {
 			ctx.Respond(err)
 		}
 	case sproto.GetJob:
-		ctx.Respond(e.toV1Job())
+		j, err := e.toV1Job()
+		if err != nil && err != sql.ErrNoRows {
+			// FIXME: DET-9563 workspace and/or project is deleted.
+			ctx.Respond(err)
+		} else {
+			ctx.Respond(j)
+		}
 
 	case sproto.SetResourcePool:
 		if err := e.setRP(ctx, msg); err != nil {
@@ -398,11 +414,7 @@ func (e *experiment) Receive(ctx *actor.Context) error {
 				ctx.Log().Error(err)
 			}
 		}
-
-		ctx.Self().System().TellAt(sproto.JobsActorAddr, sproto.UnregisterJob{
-			JobID: e.JobID,
-		})
-
+		jobservice.Default.UnregisterJob(e.JobID)
 		state := model.StoppingToTerminalStates[e.State]
 		if wasPatched, err := e.Transition(state); err != nil {
 			return err
@@ -438,9 +450,9 @@ func (e *experiment) Receive(ctx *actor.Context) error {
 		if len(checkpoints) > 0 {
 			taskID := model.TaskID(fmt.Sprintf("%d.%s", e.ID, uuid.New()))
 			ckptGCTask := newCheckpointGCTask(
-				e.rm, e.db, e.taskLogger, taskID, e.JobID, e.StartTime, taskSpec, e.Experiment.ID,
-				e.activeConfig.AsLegacy(), checkpoints, false, taskSpec.AgentUserGroup, taskSpec.Owner,
-				e.logCtx,
+				e.rm, e.db, taskID, e.JobID, e.StartTime, taskSpec, e.Experiment.ID,
+				e.activeConfig.AsLegacy(), checkpoints, []string{fullDeleteGlob},
+				false, taskSpec.AgentUserGroup, taskSpec.Owner, e.logCtx,
 			)
 			ctx.Self().System().ActorOf(addr, ckptGCTask)
 		}
@@ -592,6 +604,12 @@ func (e *experiment) Receive(ctx *actor.Context) error {
 			}
 		}
 
+	case sproto.InvalidResourcesRequestError:
+		e.updateState(ctx, model.StateWithReason{
+			State:               model.StoppingErrorState,
+			InformationalReason: msg.Cause.Error(),
+		})
+
 	default:
 		return status.Errorf(codes.InvalidArgument, "unknown message type %T", msg)
 	}
@@ -661,7 +679,7 @@ func (e *experiment) processOperations(
 			e.TrialSearcherState[op.RequestID] = state
 			ctx.ActorOf(op.RequestID, newTrial(
 				e.logCtx, trialTaskID(e.ID, op.RequestID), e.JobID, e.StartTime, e.ID, e.State,
-				state, e.taskLogger, e.rm, e.db, config, checkpoint, e.taskSpec, false,
+				state, e.rm, e.db, config, checkpoint, e.taskSpec, e.generatedKeys, false,
 			))
 		case searcher.ValidateAfter:
 			state := e.TrialSearcherState[op.RequestID]
@@ -933,7 +951,12 @@ func (e *experiment) setRP(ctx *actor.Context, msg sproto.SetResourcePool) error
 	return nil
 }
 
-func (e *experiment) toV1Job() *jobv1.Job {
+func (e *experiment) toV1Job() (*jobv1.Job, error) {
+	workspace, err := workspace.WorkspaceByProjectID(context.TODO(), e.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+
 	j := jobv1.Job{
 		JobId:          e.JobID.String(),
 		EntityId:       fmt.Sprint(e.ID),
@@ -943,6 +966,7 @@ func (e *experiment) toV1Job() *jobv1.Job {
 		UserId:         int32(*e.OwnerID),
 		Progress:       float32(e.searcher.Progress()),
 		Name:           e.activeConfig.Name().String(),
+		WorkspaceId:    int32(workspace.ID),
 	}
 
 	j.IsPreemptible = config.ReadRMPreemptionStatus(j.ResourcePool)
@@ -951,5 +975,5 @@ func (e *experiment) toV1Job() *jobv1.Job {
 
 	j.ResourcePool = e.activeConfig.Resources().ResourcePool()
 
-	return &j
+	return &j, nil
 }

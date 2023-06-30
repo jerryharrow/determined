@@ -81,7 +81,7 @@ type pods struct {
 	nodeInformer                 *actor.Ref
 	eventListeners               []*actor.Ref
 	preemptionListeners          []*actor.Ref
-	resourceRequestQueue         *actor.Ref
+	resourceRequestQueue         *requestQueue
 	podNameToPodHandler          map[string]*actor.Ref
 	podNameToResourcePool        map[string]string
 	containerIDToPodName         map[string]string
@@ -98,6 +98,8 @@ type pods struct {
 	summarizeCacheLock sync.RWMutex
 	summarizeCache     summarizeResult
 	summarizeCacheTime time.Time
+
+	handleResourceError func(ctx *actor.Context) errorCallbackFunc
 }
 
 type summarizeResult struct {
@@ -154,8 +156,7 @@ func Initialize(
 	if loggingConfig.ElasticLoggingConfig != nil {
 		loggingTLSConfig = loggingConfig.ElasticLoggingConfig.Security.TLS
 	}
-
-	podsActor, ok := s.ActorOf(actor.Addr("pods"), &pods{
+	p := &pods{
 		cluster:                      c,
 		namespace:                    namespace,
 		namespaceToPoolName:          namespaceToPoolName,
@@ -183,7 +184,13 @@ func Initialize(
 		nodeToSystemResourceRequests: make(map[string]int64),
 		podInterfaces:                make(map[string]typedV1.PodInterface),
 		configMapInterfaces:          make(map[string]typedV1.ConfigMapInterface),
-	})
+	}
+	p.handleResourceError = func(ctx *actor.Context) errorCallbackFunc {
+		return func(err error) {
+			p.resourceErrorCallback(ctx, err)
+		}
+	}
+	podsActor, ok := s.ActorOf(actor.Addr("pods"), p)
 	check.Panic(check.True(ok, "pods address already taken"))
 	s.Ask(podsActor, actor.Ping{}).Get()
 
@@ -251,11 +258,6 @@ func (p *pods) Receive(ctx *actor.Context) error {
 			return err
 		}
 
-	case resourceDeletionFailed:
-		if msg.err != nil {
-			ctx.Log().WithError(msg.err).Error("error deleting leftover kubernetes resource")
-		}
-
 	case actor.ChildStopped:
 		if err := p.cleanUpPodHandler(ctx, msg.Child); err != nil {
 			return err
@@ -265,8 +267,6 @@ func (p *pods) Receive(ctx *actor.Context) error {
 		switch msg.Child {
 		case p.nodeInformer:
 			return errors.Errorf("node informer failed")
-		case p.resourceRequestQueue:
-			return errors.Errorf("resource request actor failed")
 		}
 		for _, informer := range p.informers {
 			if msg.Child == informer {
@@ -299,6 +299,15 @@ func (p *pods) Receive(ctx *actor.Context) error {
 		return actor.ErrUnexpectedMessage(ctx)
 	}
 	return nil
+}
+
+func (p *pods) resourceErrorCallback(ctx *actor.Context, err error) {
+	switch err := err.(type) {
+	case resourceDeletionFailed:
+		ctx.Log().WithError(err).Error("error deleting leftover kubernetes resource")
+	default:
+		panic(fmt.Sprintf("unexpected message %T", err))
+	}
 }
 
 func readClientConfig(credsDir string) (*rest.Config, error) {
@@ -506,7 +515,6 @@ func (p *pods) reattachPod(
 
 	newPodHandler := newPod(
 		startMsg,
-		p.cluster,
 		startMsg.Spec.ClusterID,
 		p.clientSet,
 		pod.Namespace,
@@ -526,7 +534,6 @@ func (p *pods) reattachPod(
 	)
 
 	newPodHandler.restore = true
-	newPodHandler.logCtx["pod"] = pod.Name
 	newPodHandler.podName = pod.Name
 	newPodHandler.configMapName = pod.Name
 	newPodHandler.ports = ports
@@ -580,15 +587,15 @@ func (p *pods) deleteKubernetesResources(
 	ctx *actor.Context, pods *k8sV1.PodList, configMaps *k8sV1.ConfigMapList,
 ) {
 	for _, pod := range pods.Items {
-		ctx.Tell(p.resourceRequestQueue, deleteKubernetesResources{
-			handler: ctx.Self(), namespace: pod.Namespace, podName: pod.Name,
-		})
+		p.resourceRequestQueue.deleteKubernetesResources(
+			p.handleResourceError(ctx), pod.Namespace, pod.Name, "",
+		)
 	}
 
 	for _, configMap := range configMaps.Items {
-		ctx.Tell(p.resourceRequestQueue, deleteKubernetesResources{
-			handler: ctx.Self(), namespace: configMap.Namespace, configMapName: configMap.Name,
-		})
+		p.resourceRequestQueue.deleteKubernetesResources(
+			p.handleResourceError(ctx), configMap.Namespace, "", configMap.Name,
+		)
 	}
 }
 
@@ -702,16 +709,12 @@ func (p *pods) startPreemptionListeners(ctx *actor.Context) {
 }
 
 func (p *pods) startResourceRequestQueue(ctx *actor.Context) {
-	p.resourceRequestQueue, _ = ctx.ActorOf(
-		"kubernetes-resource-request-queue",
-		newRequestQueue(p.podInterfaces, p.configMapInterfaces),
-	)
+	p.resourceRequestQueue = startRequestQueue(p.podInterfaces, p.configMapInterfaces)
 }
 
 func (p *pods) receiveStartTaskPod(ctx *actor.Context, msg StartTaskPod) error {
 	newPodHandler := newPod(
 		msg,
-		p.cluster,
 		msg.Spec.ClusterID,
 		p.clientSet,
 		msg.Namespace,
@@ -917,26 +920,25 @@ func (p *pods) cleanUpPodHandler(ctx *actor.Context, podHandler *actor.Ref) erro
 func (p *pods) handleAPIRequest(ctx *actor.Context, apiCtx echo.Context) {
 	switch apiCtx.Request().Method {
 	case echo.GET:
-		summary, err := p.summarize(ctx)
-		if err != nil {
-			ctx.Respond(apiCtx.JSON(http.StatusInternalServerError, err))
+		summaries := p.summarizeClusterByNodes(ctx)
+		_, nodesToPools := p.getNodeResourcePoolMapping(summaries)
+		for nodeName, summary := range summaries {
+			summary.ResourcePool = nodesToPools[summary.ID]
+			summaries[nodeName] = summary
 		}
-		ctx.Respond(apiCtx.JSON(http.StatusOK, summary))
+		ctx.Respond(apiCtx.JSON(http.StatusOK, summaries))
 	default:
 		ctx.Respond(echo.ErrMethodNotAllowed)
 	}
 }
 
 func (p *pods) handleGetAgentsRequest(ctx *actor.Context) {
-	summaries, err := p.summarize(ctx)
-	if err != nil {
-		ctx.Respond(err)
-		return
-	}
+	nodeSummaries := p.summarizeClusterByNodes(ctx)
+	_, nodesToPools := p.getNodeResourcePoolMapping(nodeSummaries)
 
 	response := &apiv1.GetAgentsResponse{}
-
-	for _, summary := range summaries {
+	for _, summary := range nodeSummaries {
+		summary.ResourcePool = nodesToPools[summary.ID]
 		response.Agents = append(response.Agents, summary.ToProto())
 	}
 	ctx.Respond(response)
@@ -962,9 +964,10 @@ func (p *pods) summarize(ctx *actor.Context) (map[string]model.AgentSummary, err
 	return p.summarizeCache.summary, p.summarizeCache.err
 }
 
-func (p *pods) computeSummary(ctx *actor.Context) (map[string]model.AgentSummary, error) {
-	nodeSummaries := p.summarizeClusterByNodes(ctx)
-
+// Get the mapping of many-to-many relationship between nodes and resource pools.
+func (p *pods) getNodeResourcePoolMapping(nodeSummaries map[string]model.AgentSummary) (
+	map[string][]*k8sV1.Node, map[string][]string,
+) {
 	poolTaskContainerDefaults := extractTCDs(p.resourcePoolConfigs)
 
 	// Nvidia automatically taints nodes, so we should tolerate that when users don't customize
@@ -975,9 +978,9 @@ func (p *pods) computeSummary(ctx *actor.Context) (map[string]model.AgentSummary
 		Operator: k8sV1.TolerationOpEqual,
 	}}
 	cpuTolerations, gpuTolerations := extractTolerations(p.baseContainerDefaults)
-
-	// Build the many-to-many relationship between nodes and resource pools
 	poolsToNodes := make(map[string][]*k8sV1.Node, len(p.namespaceToPoolName))
+	nodesToPools := make(map[string][]string, len(p.namespaceToPoolName))
+
 	for _, node := range p.currentNodes {
 		_, slotType := extractSlotInfo(nodeSummaries[node.Name])
 
@@ -1008,9 +1011,19 @@ func (p *pods) computeSummary(ctx *actor.Context) (map[string]model.AgentSummary
 			// If all of a node's taints are tolerated by a pool, that node belongs to the pool.
 			if allTaintsTolerated(node.Spec.Taints, poolTolerations) {
 				poolsToNodes[poolName] = append(poolsToNodes[poolName], node)
+				nodesToPools[node.Name] = append(nodesToPools[node.Name], poolName)
 			}
 		}
 	}
+
+	return poolsToNodes, nodesToPools
+}
+
+func (p *pods) computeSummary(ctx *actor.Context) (map[string]model.AgentSummary, error) {
+	nodeSummaries := p.summarizeClusterByNodes(ctx)
+
+	// Build the many-to-many relationship between nodes and resource pools
+	poolsToNodes, _ := p.getNodeResourcePoolMapping(nodeSummaries)
 
 	// Build the set of summaries for each resource pool
 	containers := p.containersPerResourcePool()
@@ -1051,7 +1064,7 @@ func (p *pods) computeSummary(ctx *actor.Context) (map[string]model.AgentSummary
 			ID:             poolName,
 			RegisteredTime: p.cluster.RegisteredTime(),
 			NumContainers:  numContainersInPool,
-			ResourcePool:   poolName,
+			ResourcePool:   []string{poolName},
 			Slots:          slots,
 		}
 	}
@@ -1079,7 +1092,6 @@ func (p *pods) summarizeClusterByNodes(ctx *actor.Context) map[string]model.Agen
 	}
 
 	nodeToTasks, taskSlots := p.getNonDetSlots(p.slotType)
-
 	summary := make(map[string]model.AgentSummary, len(p.currentNodes))
 	for _, node := range p.currentNodes {
 		var numSlots int64
@@ -1163,7 +1175,7 @@ func (p *pods) summarizeClusterByNodes(ctx *actor.Context) map[string]model.Agen
 			RegisteredTime: node.ObjectMeta.CreationTimestamp.Time,
 			Slots:          slotsSummary,
 			NumContainers:  len(podByNode[node.Name]) + len(nodeToTasks[node.Name]),
-			ResourcePool:   "",
+			ResourcePool:   []string{""},
 			Addresses:      addrs,
 		}
 	}

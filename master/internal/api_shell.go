@@ -58,7 +58,7 @@ func (a *apiServer) GetShells(
 		return nil, err
 	}
 
-	workspaceNotFoundErr := status.Errorf(codes.NotFound, "workspace %d not found", req.WorkspaceId)
+	workspaceNotFoundErr := api.NotFoundErrs("workspace", fmt.Sprint(req.WorkspaceId), true)
 
 	if req.WorkspaceId != 0 {
 		// check if the workspace exists.
@@ -112,7 +112,7 @@ func (a *apiServer) GetShell(
 	ctx = audit.SupplyEntityID(ctx, req.ShellId)
 	if err := command.AuthZProvider.Get().CanGetNSC(
 		ctx, *curUser, model.AccessScopeID(resp.Shell.WorkspaceId)); err != nil {
-		return nil, authz.SubIfUnauthorized(err, errActorNotFound(addr))
+		return nil, authz.SubIfUnauthorized(err, api.NotFoundErrs("actor", fmt.Sprint(addr), true))
 	}
 	return resp, nil
 }
@@ -178,20 +178,23 @@ func (a *apiServer) SetShellPriority(
 func (a *apiServer) LaunchShell(
 	ctx context.Context, req *apiv1.LaunchShellRequest,
 ) (*apiv1.LaunchShellResponse, error) {
-	spec, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
-		TemplateName: req.TemplateName,
-		Config:       req.Config,
-		Files:        req.Files,
-	})
+	user, _, err := grpcutil.GetUser(ctx)
 	if err != nil {
-		return nil, api.APIErrToGRPC(errors.Wrapf(err, "failed to prepare launch params"))
+		return nil, status.Errorf(codes.Internal, "failed to get the user: %s", err)
 	}
 
-	spec.Metadata.WorkspaceID = model.DefaultWorkspaceID
-	if req.WorkspaceId != 0 {
-		spec.Metadata.WorkspaceID = model.AccessScopeID(req.WorkspaceId)
+	spec, launchWarnings, err := a.getCommandLaunchParams(ctx, &protoCommandParams{
+		TemplateName: req.TemplateName,
+		WorkspaceID:  req.WorkspaceId,
+		Config:       req.Config,
+		Files:        req.Files,
+	}, user)
+	if err != nil {
+		return nil, api.WrapWithFallbackCode(err, codes.InvalidArgument,
+			"failed to prepare launch params")
 	}
-	if err = a.isNTSCPermittedToLaunch(ctx, spec); err != nil {
+
+	if err = a.isNTSCPermittedToLaunch(ctx, spec, user); err != nil {
 		return nil, err
 	}
 

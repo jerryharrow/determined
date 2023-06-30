@@ -5,7 +5,7 @@ import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import Button from 'components/kit/Button';
 import Icon from 'components/kit/Icon';
 import Input, { InputRef } from 'components/kit/Input';
-import usePrevious from 'shared/hooks/usePrevious';
+import usePrevious from 'hooks/usePrevious';
 
 import css from './TableFilterMultiSearch.module.scss';
 
@@ -147,7 +147,7 @@ const TableFilterMultiSearch: React.FC<Props> = ({
           style={style}
           onClick={handleOptionClick}>
           {isJSX ? data[index].text : <span>{data[index].text}</span>}
-          <Icon name="checkmark" title="" />
+          <Icon name="checkmark" title="checkmark" />
         </div>
       );
     },

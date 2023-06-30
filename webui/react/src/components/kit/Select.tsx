@@ -3,7 +3,7 @@ import type { DefaultOptionType, RefSelectProps, SelectValue } from 'antd/es/sel
 import React, { forwardRef, useCallback, useMemo, useState } from 'react';
 
 import Icon from 'components/kit/Icon';
-import Label, { LabelTypes } from 'components/Label';
+import Label, { LabelTypes } from 'components/kit/internal/Label';
 
 import css from './Select.module.scss';
 
@@ -36,6 +36,7 @@ export interface SelectProps<T extends SelectValue = SelectValue> {
   searchable?: boolean;
   value?: T;
   width?: React.CSSProperties['width'];
+  onDropdownVisibleChange?: (open: boolean) => void;
 }
 
 const countOptions = (children: React.ReactNode, options?: Options): number => {

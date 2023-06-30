@@ -5,10 +5,10 @@ import { useNavigate } from 'react-router-dom';
 
 import { updateUserSetting } from 'services/api';
 import { UpdateUserSettingParams } from 'services/types';
-import { Primitive } from 'shared/types';
-import { isEqual } from 'shared/utils/data';
-import { ErrorType } from 'shared/utils/error';
 import userStore from 'stores/users';
+import { Primitive } from 'types';
+import { isEqual } from 'utils/data';
+import { ErrorType } from 'utils/error';
 import handleError from 'utils/error';
 import { Loadable } from 'utils/loadable';
 
@@ -61,7 +61,10 @@ const settingsToQuery = <T>(config: SettingsConfig<T>, settings: Settings) => {
 };
 
 const queryParamToType = <T>(
-  type: t.Type<SettingsConfig<T>, SettingsConfig<T>, unknown>,
+  type:
+    | t.Type<SettingsConfig<T>, SettingsConfig<T> | T, unknown>
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    | t.Type<t.ArrayType<any>, t.LiteralType<boolean | number | string>>,
   param: string | null,
 ): Primitive | undefined => {
   if (param === null || param === undefined) return undefined;
@@ -72,12 +75,28 @@ const queryParamToType = <T>(
   }
   if (type.is({})) return JSON.parse(param);
   if (type.is('')) return param;
+  if (type.is([])) {
+    if (type instanceof t.UnionType) {
+      // UnionType
+      return type.types.reduce(
+        (
+          acc: Primitive | undefined,
+          /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+          tComponent: t.Type<t.ArrayType<any>, t.LiteralType<boolean | number | string>>,
+        ) => acc ?? (tComponent === t.unknown ? undefined : queryParamToType(tComponent, param)),
+        undefined,
+      );
+    } else if (type instanceof t.ArrayType) {
+      // ArrayType
+      return queryParamToType(type.type, param);
+    }
+  }
+  // LiteralType
+  if (type.is(param)) return param;
   return undefined;
 };
 
-const queryToSettings = <T>(config: SettingsConfig<T>, query: string) => {
-  const params = new URLSearchParams(query);
-
+const queryToSettings = <T>(config: SettingsConfig<T>, params: URLSearchParams) => {
   return (Object.values(config.settings) as SettingsConfigProp<typeof config>[]).reduce<Settings>(
     (acc, setting) => {
       /*
@@ -85,16 +104,19 @@ const queryToSettings = <T>(config: SettingsConfig<T>, query: string) => {
        * goes wrong, set it to the default value.
        */
       try {
-        let paramValue: null | string | string[] = params.getAll(setting.storageKey);
-        if (paramValue.length === 0) {
-          paramValue = null;
-        } else if (paramValue.length === 1) {
-          paramValue = paramValue[0];
-        }
         const baseType = setting.type;
         const isArray = baseType.is([]);
 
+        let paramValue: null | string | string[] = params.getAll(setting.storageKey);
+        if (paramValue.length === 0) {
+          paramValue = null;
+        } else if (paramValue.length === 1 && !isArray) {
+          paramValue = paramValue[0];
+        }
+
         if (paramValue !== null) {
+          params.delete(setting.storageKey);
+
           let queryValue: Primitive | Primitive[] | undefined = undefined;
           /*
            * Convert the string-based query params to primitives.
@@ -105,13 +127,13 @@ const queryToSettings = <T>(config: SettingsConfig<T>, query: string) => {
           if (Array.isArray(paramValue)) {
             queryValue = paramValue.reduce<Primitive[]>((acc, value) => {
               const parsedValue = queryParamToType<T>(baseType, value);
-
               if (parsedValue !== undefined) acc.push(parsedValue);
-
               return acc;
             }, []);
-          } else {
+          } else if (!isArray) {
             queryValue = queryParamToType<T>(baseType, paramValue);
+          } else {
+            queryValue = [paramValue];
           }
 
           if (queryValue !== undefined) {
@@ -140,12 +162,7 @@ const queryToSettings = <T>(config: SettingsConfig<T>, query: string) => {
 };
 
 const useSettings = <T>(config: SettingsConfig<T>): UseSettingsReturn<T> => {
-  const {
-    isLoading: isLoadingOb,
-    querySettings,
-    state: stateOb,
-    clearQuerySettings,
-  } = useContext(UserSettings);
+  const { isLoading: isLoadingOb, querySettings, state: stateOb } = useContext(UserSettings);
   const initialLoading = useObservable(isLoadingOb);
   const derivedOb = useMemo(
     () => stateOb.select((s) => s.get(config.storagePath)),
@@ -154,23 +171,6 @@ const useSettings = <T>(config: SettingsConfig<T>): UseSettingsReturn<T> => {
   const state = useObservable(derivedOb);
   const navigate = useNavigate();
   const currentUser = Loadable.getOrElse(undefined, useObservable(userStore.currentUser));
-
-  // parse navigation url to state
-  useEffect(() => {
-    if (!querySettings) return;
-
-    const settings = queryToSettings<T>(config, querySettings);
-    const stateSettings = state ?? {};
-
-    if (isEqual(settings, stateSettings)) return;
-
-    Object.keys(settings).forEach((setting) => {
-      stateSettings[setting] = settings[setting];
-    });
-    stateOb.update((s) => s.set(config.storagePath, stateSettings));
-
-    clearQuerySettings();
-  }, [config, querySettings, state, clearQuerySettings, stateOb]);
 
   const settings: SettingsRecord<T> = useMemo(
     () =>
@@ -297,6 +297,14 @@ const useSettings = <T>(config: SettingsConfig<T>): UseSettingsReturn<T> => {
     },
     [config, stateOb],
   );
+
+  // parse navigation url to state
+  useEffect(() => {
+    if (!querySettings) return;
+
+    const parsedSettings = queryToSettings<T>(config, querySettings);
+    updateSettings(parsedSettings);
+  }, [config, querySettings, updateSettings]);
 
   useLayoutEffect(() => {
     if (initialLoading) return;

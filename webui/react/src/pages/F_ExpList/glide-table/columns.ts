@@ -6,57 +6,57 @@ import {
   SizedGridColumn,
 } from '@glideapps/glide-data-grid';
 
+import { getColor, getInitials } from 'components/Avatar';
 import { terminalRunStates } from 'constants/states';
 import { paths } from 'routes/utils';
-import { getColor, getInitials } from 'shared/components/Avatar';
-import { DarkLight, Theme } from 'shared/themes';
-import { getPath, isString } from 'shared/utils/data';
-import { formatDatetime } from 'shared/utils/datetime';
-import { humanReadableNumber } from 'shared/utils/number';
-import { humanReadableBytes } from 'shared/utils/string';
 import { DetailedUser, ExperimentWithTrial, ProjectColumn } from 'types';
+import { getPath, isString } from 'utils/data';
+import { formatDatetime } from 'utils/datetime';
 import { Loadable } from 'utils/loadable';
+import { humanReadableNumber } from 'utils/number';
+import { humanReadableBytes } from 'utils/string';
+import { DarkLight, Theme } from 'utils/themes';
 import { getDisplayName } from 'utils/user';
 
 import { getDurationInEnglish, getTimeInEnglish } from './utils';
 
-const experimentColumns = [
+export const MIN_COLUMN_WIDTH = 40;
+
+export const MULTISELECT = 'selected';
+
+// order used in ColumnPickerMenu
+export const experimentColumns = [
+  MULTISELECT,
   'archived',
-  'checkpointCount',
-  'checkpointSize',
-  'description',
-  'duration',
-  'forkedFrom',
-  'id',
   'name',
-  'progress',
+  'id',
+  'forkedFrom',
+  'startTime',
+  'user',
+  'description',
+  'tags',
+  'state',
+  'duration',
   'resourcePool',
   'searcherType',
-  'selected',
-  'startTime',
-  'state',
-  'tags',
+  'progress',
   'numTrials',
-  'user',
+  'checkpointCount',
+  'checkpointSize',
+  'searcherMetric',
+  'searcherMetricsVal',
 ] as const;
 
 export type ExperimentColumn = (typeof experimentColumns)[number];
 
 export const defaultExperimentColumns: ExperimentColumn[] = [
-  'id',
+  'startTime',
+  'user',
   'description',
   'tags',
-  'forkedFrom',
-  'progress',
-  'startTime',
   'state',
-  'searcherType',
-  'user',
   'duration',
-  'numTrials',
-  'resourcePool',
-  'checkpointSize',
-  'checkpointCount',
+  'searcherType',
 ];
 
 export type ColumnDef = SizedGridColumn & {
@@ -266,21 +266,42 @@ export const getColumnDefs = ({
     tooltip: () => undefined,
     width: columnWidths.resourcePool,
   },
-  searcherMetricValue: {
-    id: 'searcherMetricValue',
+  searcherMetric: {
+    id: 'searcherMetric',
+    isNumerical: false,
+    renderer: (record: ExperimentWithTrial) => {
+      const sMetric = record.experiment.config.searcher.metric;
+      return {
+        allowOverlay: false,
+        data: sMetric,
+        displayData: sMetric,
+        kind: GridCellKind.Text,
+      };
+    },
+    title: 'Searcher Metric',
+    tooltip: () => undefined,
+    width: columnWidths.searcherMetric,
+  },
+  searcherMetricsVal: {
+    id: 'searcherMetricsVal',
     isNumerical: true,
-    renderer: (record: ExperimentWithTrial) => ({
-      allowOverlay: false,
-      data:
-        record.experiment.searcherMetricValue !== undefined
-          ? humanReadableNumber(record.experiment.searcherMetricValue)
+    renderer: (record: ExperimentWithTrial) => {
+      const sMetric = record.experiment.config.searcher.metric;
+      const sMetricValue = record.bestTrial?.bestValidationMetric?.metrics?.[sMetric];
+      return {
+        allowOverlay: false,
+        data: sMetricValue?.toString() || '',
+        displayData: sMetricValue
+          ? typeof sMetricValue === 'number'
+            ? humanReadableNumber(sMetricValue)
+            : sMetricValue
           : '',
-      displayData: String(record.experiment.searcherMetricValue ?? ''),
-      kind: GridCellKind.Text,
-    }),
+        kind: GridCellKind.Text,
+      };
+    },
     title: 'Searcher Metric Values',
     tooltip: () => undefined,
-    width: columnWidths.searcherMetricValue,
+    width: columnWidths.searcherMetricsVal,
   },
   searcherType: {
     id: 'searcherType',
@@ -296,7 +317,7 @@ export const getColumnDefs = ({
   },
   selected: {
     icon: selectAll ? 'allSelected' : rowSelection.length ? 'someSelected' : 'noneSelected',
-    id: 'selected',
+    id: MULTISELECT,
     renderer: (_: ExperimentWithTrial, idx) => ({
       allowOverlay: false,
       contentAlign: 'left',
@@ -392,7 +413,7 @@ export const getColumnDefs = ({
 
 export const defaultTextColumn = (
   column: ProjectColumn,
-  columnWidths?: Record<string, number>,
+  columnWidth?: number,
   dataPath?: string,
 ): ColumnDef => {
   return {
@@ -408,13 +429,13 @@ export const defaultTextColumn = (
     },
     title: column.displayName || column.column,
     tooltip: () => undefined,
-    width: columnWidths?.[column.column] ?? 140,
+    width: columnWidth ?? 140,
   };
 };
 
 export const defaultNumberColumn = (
   column: ProjectColumn,
-  columnWidths?: Record<string, number>,
+  columnWidth?: number,
   dataPath?: string,
 ): ColumnDef => {
   return {
@@ -430,13 +451,13 @@ export const defaultNumberColumn = (
     },
     title: column.displayName || column.column,
     tooltip: () => undefined,
-    width: columnWidths?.[column.column] ?? 140,
+    width: columnWidth ?? 140,
   };
 };
 
 export const defaultDateColumn = (
   column: ProjectColumn,
-  columnWidths?: Record<string, number>,
+  columnWidth?: number,
   dataPath?: string,
 ): ColumnDef => {
   return {
@@ -452,7 +473,7 @@ export const defaultDateColumn = (
     },
     title: column.displayName || column.column,
     tooltip: () => undefined,
-    width: columnWidths?.[column.column] ?? 140,
+    width: columnWidth ?? 140,
   };
 };
 
@@ -468,6 +489,8 @@ export const defaultColumnWidths: Record<ExperimentColumn, number> = {
   numTrials: 50,
   progress: 65,
   resourcePool: 140,
+  searcherMetric: 120,
+  searcherMetricsVal: 120,
   searcherType: 120,
   selected: 40,
   startTime: 118,

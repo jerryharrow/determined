@@ -11,7 +11,6 @@ import HpParallelCoordinates from 'pages/ExperimentDetails/ExperimentVisualizati
 import { V1MetricBatchesResponse } from 'services/api-ts-sdk';
 import { detApi } from 'services/apiConfig';
 import { readStream } from 'services/utils';
-import { alphaNumericSorter } from 'shared/utils/sort';
 import {
   ExperimentBase,
   ExperimentSearcherName,
@@ -20,6 +19,8 @@ import {
   TrialDetails,
 } from 'types';
 import handleError from 'utils/error';
+import { Loadable } from 'utils/loadable';
+import { alphaNumericSorter } from 'utils/sort';
 
 import {
   ExperimentHyperparametersSettings,
@@ -75,7 +76,8 @@ const MultiTrialDetailsHyperparameters: React.FC<Props> = ({
   );
 
   // Stream available metrics.
-  const metrics = useMetricNames(experiment.id, handleError);
+  const loadableMetrics = useMetricNames([experiment.id], handleError);
+  const metrics = Loadable.getOrElse([], loadableMetrics);
 
   const isSupported = useMemo(() => {
     return !(
@@ -100,6 +102,7 @@ const MultiTrialDetailsHyperparameters: React.FC<Props> = ({
         experiment.id,
         settings.metric.name,
         metricTypeParam,
+        undefined,
         undefined,
         { signal: canceler.signal },
       ),

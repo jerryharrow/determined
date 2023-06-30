@@ -2,7 +2,7 @@ import * as t from 'io-ts';
 
 import { ioColumnType, ioLocationType } from 'ioTypes';
 import { V1ColumnType } from 'services/api-ts-sdk';
-import { ValueOf } from 'shared/types';
+import { ValueOf } from 'types';
 import { RunState } from 'types';
 
 export const FormKind = {
@@ -144,7 +144,7 @@ export const RUN_STATES = [
   RunState.Error,
 ] as const;
 
-export const SEARCHER_TYPE = ['adaptive_asha', 'single', 'random'] as const;
+export const SEARCHER_TYPE = ['adaptive_asha', 'single', 'grid', 'random', 'custom'] as const;
 
 export const SpecialColumnNames = ['user', 'state', 'resourcePool', 'searcherType'] as const;
 
